@@ -1,6 +1,6 @@
 """
-Клиент LLM (OpenAI-совместимый Chat Completions API) и построители клиентских
-текстов.
+Клиент LLM (нативный Anthropic Messages API ИЛИ OpenAI-совместимый Chat
+Completions — по settings.llm_provider) и построители клиентских текстов.
 
 Ключевые принципы:
   * LLM полностью опционален. Если он выключен или недоступен (нет httpx, нет
@@ -69,7 +69,15 @@ def _sanitize_tone(text: str) -> str:
 # Клиент LLM
 # ---------------------------------------------------------------------------
 class LLMClient:
-    """OpenAI-совместимый клиент Chat Completions."""
+    """
+    Клиент LLM с двумя режимами (выбор через settings.llm_provider):
+      * "anthropic" — нативный Anthropic Messages API (POST /v1/messages,
+        заголовок x-api-key + anthropic-version);
+      * иначе (по умолчанию) — OpenAI-совместимый Chat Completions
+        (POST /chat/completions, Authorization: Bearer).
+    """
+
+    _ANTHROPIC_PROVIDERS = {"anthropic", "claude", "native"}
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -81,6 +89,10 @@ class LLMClient:
         except Exception:
             return False
 
+    def _is_anthropic(self) -> bool:
+        provider = str(getattr(self.settings, "llm_provider", "") or "").strip().lower()
+        return provider in self._ANTHROPIC_PROVIDERS
+
     def chat(
         self,
         system: str,
@@ -89,63 +101,115 @@ class LLMClient:
         max_tokens: Optional[int] = None,
     ) -> Optional[str]:
         """
-        Выполнить один запрос к Chat Completions. Возвращает текст ответа или
-        None. Никогда не бросает исключение.
+        Выполнить один запрос к LLM (нативный Anthropic или OpenAI-совместимый —
+        см. settings.llm_provider). Возвращает текст ответа или None. Никогда не
+        бросает исключение.
         """
         if not self.enabled:
             return None
-
         try:
             import httpx  # guarded: библиотека может быть не установлена
         except Exception:
             return None
 
+        mt = int(max_tokens if max_tokens is not None else self.settings.llm_max_tokens) or 4000
         try:
-            base = (self.settings.llm_base_url or "").rstrip("/")
-            url = base + "/chat/completions"
-            temp = temperature if temperature is not None else self.settings.llm_temperature
-            payload: Dict[str, Any] = {
-                "model": self.settings.llm_model,
-                "messages": [
-                    {"role": "system", "content": system or ""},
-                    {"role": "user", "content": user or ""},
-                ],
-                "temperature": temp,
-            }
-            mt = max_tokens if max_tokens is not None else self.settings.llm_max_tokens
-            if mt:
-                payload["max_tokens"] = int(mt)
-
-            headers = {
-                "Authorization": f"Bearer {self.settings.llm_api_key}",
-                "Content-Type": "application/json",
-            }
-
-            with httpx.Client(timeout=60.0) as client:
-                resp = client.post(url, json=payload, headers=headers)
-            if resp.status_code < 200 or resp.status_code >= 300:
-                return None
-            data = resp.json()
-            choices = data.get("choices") or []
-            if not choices:
-                return None
-            message = choices[0].get("message") or {}
-            content = message.get("content")
-            if isinstance(content, list):
-                # Некоторые провайдеры возвращают content частями.
-                parts = []
-                for part in content:
-                    if isinstance(part, dict):
-                        parts.append(str(part.get("text", "")))
-                    else:
-                        parts.append(str(part))
-                content = "".join(parts)
-            if content is None:
-                return None
-            content = str(content).strip()
-            return content or None
+            if self._is_anthropic():
+                return self._chat_anthropic(httpx, system or "", user or "", mt)
+            return self._chat_openai(httpx, system or "", user or "", temperature, mt)
         except Exception:
             return None
+
+    # -- OpenAI-совместимый Chat Completions --
+    def _chat_openai(
+        self, httpx, system: str, user: str,
+        temperature: Optional[float], max_tokens: int,
+    ) -> Optional[str]:
+        base = (self.settings.llm_base_url or "").rstrip("/")
+        url = base + "/chat/completions"
+        temp = temperature if temperature is not None else self.settings.llm_temperature
+        payload: Dict[str, Any] = {
+            "model": self.settings.llm_model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "temperature": temp,
+        }
+        if max_tokens:
+            payload["max_tokens"] = int(max_tokens)
+        headers = {
+            "Authorization": f"Bearer {self.settings.llm_api_key}",
+            "Content-Type": "application/json",
+        }
+        with httpx.Client(timeout=60.0) as client:
+            resp = client.post(url, json=payload, headers=headers)
+        if resp.status_code < 200 or resp.status_code >= 300:
+            return None
+        data = resp.json()
+        choices = data.get("choices") or []
+        if not choices:
+            return None
+        message = choices[0].get("message") or {}
+        content = message.get("content")
+        if isinstance(content, list):
+            # Некоторые провайдеры возвращают content частями.
+            parts = []
+            for part in content:
+                if isinstance(part, dict):
+                    parts.append(str(part.get("text", "")))
+                else:
+                    parts.append(str(part))
+            content = "".join(parts)
+        if content is None:
+            return None
+        content = str(content).strip()
+        return content or None
+
+    # -- Нативный Anthropic Messages API --
+    def _chat_anthropic(self, httpx, system: str, user: str, max_tokens: int) -> Optional[str]:
+        base = (self.settings.llm_base_url or "").rstrip("/")
+        # По умолчанию (или если в base остался openai) используем api.anthropic.com.
+        if not base or "openai" in base.lower():
+            base = "https://api.anthropic.com"
+        url = base + ("/messages" if base.endswith("/v1") else "/v1/messages")
+
+        # Модель обязана быть Claude-моделью; если случайно осталась openai-строка
+        # (напр. дефолтная gpt-4o-mini) — берём разумный дефолт, чтобы не словить 404.
+        model = (self.settings.llm_model or "").strip()
+        if not model.lower().startswith("claude"):
+            model = "claude-sonnet-5"
+
+        payload: Dict[str, Any] = {
+            "model": model,
+            "max_tokens": int(max_tokens),
+            "messages": [{"role": "user", "content": user}],
+        }
+        if system:
+            payload["system"] = system  # system — top-level поле, не сообщение
+        # ВАЖНО: НЕ передаём temperature/top_p/top_k/thinking — на актуальных
+        # моделях (Opus 4.8/4.7, Sonnet 5, Fable 5) sampling-параметры дают 400.
+
+        headers = {
+            "x-api-key": self.settings.llm_api_key,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        }
+        with httpx.Client(timeout=90.0) as client:
+            resp = client.post(url, json=payload, headers=headers)
+        if resp.status_code < 200 or resp.status_code >= 300:
+            return None
+        data = resp.json()
+        # Отказ модели по соображениям безопасности — не считаем ответом.
+        if data.get("stop_reason") == "refusal":
+            return None
+        # content — список блоков; берём текстовые (пропуская thinking-блоки).
+        parts: List[str] = []
+        for block in data.get("content") or []:
+            if isinstance(block, dict) and block.get("type") == "text":
+                parts.append(str(block.get("text", "")))
+        content = "".join(parts).strip()
+        return content or None
 
     def generate(self, system: str, user: str) -> Optional[str]:
         """Обёртка над chat для генерации свободного текста."""
