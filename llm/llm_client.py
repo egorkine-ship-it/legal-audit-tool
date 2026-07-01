@@ -142,7 +142,7 @@ class LLMClient:
             "Authorization": f"Bearer {self.settings.llm_api_key}",
             "Content-Type": "application/json",
         }
-        with httpx.Client(timeout=60.0) as client:
+        with httpx.Client(timeout=45.0) as client:
             resp = client.post(url, json=payload, headers=headers)
         if resp.status_code < 200 or resp.status_code >= 300:
             return None
@@ -195,7 +195,7 @@ class LLMClient:
             "anthropic-version": "2023-06-01",
             "Content-Type": "application/json",
         }
-        with httpx.Client(timeout=90.0) as client:
+        with httpx.Client(timeout=60.0) as client:
             resp = client.post(url, json=payload, headers=headers)
         if resp.status_code < 200 or resp.status_code >= 300:
             return None

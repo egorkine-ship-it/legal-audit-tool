@@ -79,6 +79,10 @@ LINK_KEYWORDS: List[str] = [
 
 # Максимум «прочих» внутренних ссылок с главной, добавляемых сверх приоритетных.
 _MAX_OTHER_INTERNAL = 15
+# Максимум ДОГАДОК по типовым путям (/privacy, /oferta, ...). Они добавляются
+# ПОСЛЕДНИМИ и только чтобы добить бюджет, если реальных ссылок мало — иначе
+# 404-догадки съедают весь лимит и до реальных документов дело не доходит.
+_MAX_GUESS_PATHS = 8
 
 
 def _base_from_url(url: str) -> str:
@@ -187,14 +191,71 @@ def resolve_start_url(
     return (base_url, raw_home)
 
 
-def _links_text_map(raw_home: RawPage) -> Dict[str, str]:
+def _homepage_anchors(raw_home: RawPage, base: str) -> List[Tuple[str, str]]:
     """
-    Заглушка для сопоставления ссылки с текстом. RawPage хранит только URL
-    ссылок, поэтому для поиска ключевых слов используем сам URL. Возвращаем
-    словарь url->url (текст недоступен) — вызывающий код ищет ключевые слова
-    в URL.
+    Вернуть список (абсолютный_url, текст_ссылки) из главной страницы.
+
+    Текст ссылки берём из HTML (важно: в подвале ссылка часто выглядит как
+    <a href="/legal/doc-42">Политика обработки персональных данных</a> — в URL
+    ключевого слова нет, а в тексте есть). Если bs4 недоступен — откатываемся к
+    raw_home.links (только URL, без текста).
     """
-    return {}
+    out: List[Tuple[str, str]] = []
+    seen = set()
+
+    def _push(url: str, text: str) -> None:
+        if not url:
+            return
+        try:
+            clean = utils.strip_fragment(url)
+        except Exception:
+            clean = url
+        if not clean or clean in seen:
+            return
+        seen.add(clean)
+        out.append((clean, text or ""))
+
+    base_for_abs = ""
+    try:
+        base_for_abs = getattr(raw_home, "final_url", "") or getattr(raw_home, "url", "") or base
+    except Exception:
+        base_for_abs = base
+
+    html = ""
+    try:
+        html = getattr(raw_home, "html", "") or ""
+    except Exception:
+        html = ""
+
+    if html:
+        try:
+            from bs4 import BeautifulSoup  # type: ignore
+
+            soup = BeautifulSoup(html, "html.parser")
+            for a in soup.find_all("a", href=True):
+                href = a.get("href", "") or ""
+                try:
+                    text = a.get_text(" ", strip=True)
+                except Exception:
+                    text = ""
+                try:
+                    abs_u = utils.absolute_url(base_for_abs, href)
+                except Exception:
+                    abs_u = ""
+                if abs_u:
+                    _push(abs_u, utils.clean_text(text))
+        except Exception:
+            pass
+
+    # Добираем ссылки, которые fetcher уже абсолютизировал (текста нет).
+    try:
+        for link in raw_home.links or []:
+            if isinstance(link, str):
+                _push(link, "")
+    except Exception:
+        pass
+
+    return out
 
 
 def discover_urls(
@@ -207,12 +268,13 @@ def discover_urls(
     """
     Построить упорядоченный дедуплицированный список URL для проверки.
 
-    Порядок:
-      1) PRIORITY_PATHS как абсолютные URL на base_url;
-      2) внутренние ссылки главной (тот же зарег. домен, похоже на HTML),
-         в URL которых встречается любой LINK_KEYWORD;
-      3) до ~15 прочих внутренних HTML-ссылок главной;
-      4) sitemap_urls, в URL которых встречается любой LINK_KEYWORD.
+    Порядок (СНАЧАЛА реальные ссылки сайта, догадки — в конце):
+      1) внутренние ссылки главной (footer/меню), у которых ключевое слово есть
+         в URL ИЛИ в тексте ссылки — это реальные документы/страницы сайта;
+      2) sitemap_urls с ключевыми словами;
+      3) до ~15 прочих внутренних HTML-ссылок главной (могут содержать формы);
+      4) ДОГАДКИ по типовым путям (/privacy, /oferta, ...) — только чтобы добить
+         бюджет, не более _MAX_GUESS_PATHS, чтобы 404-догадки не съедали лимит.
 
     Исключаем точный base_url. Итог ограничиваем settings.max_pages.
     """
@@ -244,80 +306,40 @@ def discover_urls(
         if not clean:
             return
         # Исключаем точный base_url (главная уже загружена оркестратором).
-        key = clean
-        cmp_key = ""
         try:
             cmp_key = clean.rstrip("/")
         except Exception:
             cmp_key = clean
         if base_stripped and cmp_key == base_stripped:
             return
-        if key in seen:
+        if clean in seen:
             return
-        seen.add(key)
-        ordered.append(key)
+        seen.add(clean)
+        ordered.append(clean)
 
-    # (1) PRIORITY_PATHS -> абсолютные URL на base_url.
-    if base:
-        for path in PRIORITY_PATHS:
-            if path == "/":
-                # «/» — это и есть главная (base_url); пропускаем.
-                continue
-            try:
-                abs_url = utils.absolute_url(base, path)
-            except Exception:
-                abs_url = ""
-            if abs_url:
-                _add(abs_url)
-
-    # Собираем внутренние HTML-ссылки главной страницы.
-    home_links: List[str] = []
-    try:
-        home_links = list(raw_home.links or [])
-    except Exception:
-        home_links = []
-
-    internal_html_links: List[str] = []
-    for link in home_links:
-        if not link or not isinstance(link, str):
-            continue
+    # Реальные ссылки главной (с текстом), разложенные на «документные» и прочие.
+    doc_links: List[str] = []
+    other_links: List[str] = []
+    for abs_url, text in _homepage_anchors(raw_home, base):
         try:
-            if not utils.same_registered_domain(link, base or link):
+            if base and not utils.same_registered_domain(abs_url, base):
                 continue
-            if not utils.is_probably_html_url(link):
+            if not utils.is_probably_html_url(abs_url):
                 continue
         except Exception:
             continue
-        internal_html_links.append(link)
-
-    # (2) Внутренние ссылки, содержащие ключевые слова в URL.
-    keyword_links: List[str] = []
-    other_links: List[str] = []
-    for link in internal_html_links:
+        blob = abs_url + " " + (text or "")
         try:
-            has_kw = utils.contains_any(link, LINK_KEYWORDS)
+            has_kw = utils.contains_any(blob, LINK_KEYWORDS)
         except Exception:
             has_kw = False
-        if has_kw:
-            keyword_links.append(link)
-        else:
-            other_links.append(link)
+        (doc_links if has_kw else other_links).append(abs_url)
 
-    for link in keyword_links:
+    # (1) Реальные «документные» ссылки — в первую очередь.
+    for link in doc_links:
         _add(link)
 
-    # (3) До ~15 прочих внутренних HTML-ссылок.
-    added_other = 0
-    for link in other_links:
-        if added_other >= _MAX_OTHER_INTERNAL:
-            break
-        before = len(ordered)
-        _add(link)
-        if len(ordered) > before:
-            added_other += 1
-
-    # (4) sitemap_urls, содержащие ключевые слова.
-    sm_list: List[str] = []
+    # (2) sitemap_urls с ключевыми словами.
     try:
         sm_list = list(sitemap_urls or [])
     except Exception:
@@ -332,5 +354,31 @@ def discover_urls(
             continue
         _add(url)
 
-    # Ограничиваем общий размер.
+    # (3) До ~15 прочих внутренних HTML-ссылок (могут содержать формы).
+    added_other = 0
+    for link in other_links:
+        if added_other >= _MAX_OTHER_INTERNAL:
+            break
+        before = len(ordered)
+        _add(link)
+        if len(ordered) > before:
+            added_other += 1
+
+    # (4) ДОГАДКИ по типовым путям — последними и с лимитом.
+    if base:
+        guesses = 0
+        for path in PRIORITY_PATHS:
+            if path == "/":
+                continue
+            if len(ordered) >= max_pages or guesses >= _MAX_GUESS_PATHS:
+                break
+            try:
+                abs_url = utils.absolute_url(base, path)
+            except Exception:
+                abs_url = ""
+            before = len(ordered)
+            _add(abs_url)
+            if len(ordered) > before:
+                guesses += 1
+
     return ordered[:max_pages]
