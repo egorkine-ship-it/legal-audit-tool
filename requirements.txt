@@ -1,0 +1,49 @@
+# --- Веб-интерфейс ---
+streamlit>=1.33
+
+# --- Сканирование ---
+playwright>=1.44
+beautifulsoup4>=4.12
+lxml>=5.2
+requests>=2.32
+httpx>=0.27
+
+# --- Данные / таблицы ---
+pandas>=2.2
+openpyxl>=3.1
+
+# --- Модели / конфигурация ---
+pydantic>=2.7
+python-dotenv>=1.0
+PyYAML>=6.0
+
+# --- База данных (PostgreSQL для облака, SQLite локально) ---
+SQLAlchemy>=2.0
+psycopg[binary]>=3.1
+
+# --- Документы ---
+pypdf>=4.2
+python-docx>=1.1
+
+# --- Домены / сеть ---
+tldextract>=5.1
+dnspython>=2.6
+
+# --- Безопасный разбор XML карт сайта (защита от XXE/entity-expansion) ---
+# Необязателен: при отсутствии применяется отклонение DOCTYPE/ENTITY + stdlib.
+defusedxml>=0.7
+
+# --- Отчёты ---
+Jinja2>=3.1
+# WeasyPrint требует системных библиотек (pango, cairo, gdk-pixbuf).
+# Если установка затруднена — приложение автоматически использует Playwright PDF.
+weasyprint>=61.0
+
+# --- LLM (OpenAI-совместимый API вызывается напрямую через httpx) ---
+# openai  # не обязателен: запросы идут через httpx; раскомментируйте при желании
+
+# --- GeoIP (опционально; нужен локальный GeoLite2-Country.mmdb) ---
+geoip2>=4.8
+
+# --- Тесты ---
+pytest>=8.2

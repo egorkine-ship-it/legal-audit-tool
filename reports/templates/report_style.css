@@ -1,0 +1,411 @@
+/*
+ * Стили отчёта юридического бюро. Ориентированы на печать в A4 (PDF),
+ * при этом корректно отображаются и в браузере (HTML-предпросмотр).
+ * Нейтральная деловая типографика, без агрессивных цветов.
+ */
+
+@page {
+    size: A4;
+    margin: 18mm 16mm 20mm 16mm;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html, body {
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: "PT Sans", "DejaVu Sans", "Segoe UI", Arial, sans-serif;
+    font-size: 11pt;
+    line-height: 1.5;
+    color: #1f2933;
+    background: #ffffff;
+}
+
+.report {
+    max-width: 210mm;
+    margin: 0 auto;
+    padding: 0 4mm;
+}
+
+/* --- Типографика --- */
+h1, h2, h3, h4 {
+    color: #0f2a43;
+    font-weight: 700;
+    margin: 0 0 8px 0;
+    line-height: 1.25;
+}
+
+h1 {
+    font-size: 22pt;
+}
+
+h2 {
+    font-size: 15pt;
+    border-bottom: 2px solid #0f2a43;
+    padding-bottom: 4px;
+    margin-top: 6px;
+}
+
+h3 {
+    font-size: 12.5pt;
+    color: #24405c;
+}
+
+h4 {
+    font-size: 11pt;
+    color: #24405c;
+    margin-bottom: 4px;
+}
+
+p {
+    margin: 0 0 8px 0;
+}
+
+a {
+    color: #1c4e80;
+    text-decoration: none;
+    word-break: break-all;
+}
+
+ul, ol {
+    margin: 0 0 8px 0;
+    padding-left: 20px;
+}
+
+li {
+    margin-bottom: 3px;
+}
+
+small, .muted {
+    color: #626d78;
+    font-size: 9.5pt;
+}
+
+.mono {
+    font-family: "DejaVu Sans Mono", "Consolas", monospace;
+    font-size: 9.5pt;
+    word-break: break-all;
+}
+
+/* --- Секции --- */
+.section {
+    page-break-inside: auto;
+    margin-bottom: 18px;
+}
+
+.section-lead {
+    color: #3a4a58;
+    margin-bottom: 10px;
+}
+
+.spacer {
+    height: 8px;
+}
+
+.page-break {
+    page-break-before: always;
+}
+
+/* --- Обложка --- */
+.cover {
+    page-break-after: always;
+    padding-top: 30mm;
+    text-align: left;
+}
+
+.cover .logo {
+    max-height: 90px;
+    max-width: 260px;
+    margin-bottom: 24px;
+}
+
+.cover .firm-name {
+    font-size: 13pt;
+    color: #24405c;
+    font-weight: 700;
+    margin-bottom: 4px;
+}
+
+.cover .report-title {
+    font-size: 26pt;
+    margin: 30px 0 8px 0;
+}
+
+.cover .report-subtitle {
+    font-size: 14pt;
+    color: #3a4a58;
+    margin-bottom: 24px;
+}
+
+.cover .cover-meta {
+    margin-top: 22px;
+    font-size: 11pt;
+}
+
+.cover .cover-meta div {
+    margin-bottom: 4px;
+}
+
+.cover .cover-meta .label {
+    display: inline-block;
+    min-width: 150px;
+    color: #626d78;
+}
+
+.disclaimer-box {
+    margin-top: 30px;
+    padding: 12px 14px;
+    border: 1px solid #c9d4de;
+    border-left: 4px solid #0f2a43;
+    background: #f5f8fb;
+    font-size: 9.5pt;
+    color: #3a4a58;
+    line-height: 1.45;
+}
+
+.disclaimer-box .disclaimer-title {
+    font-weight: 700;
+    color: #0f2a43;
+    margin-bottom: 4px;
+    display: block;
+}
+
+/* --- Плашки уровня риска --- */
+.badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 3px;
+    font-size: 9.5pt;
+    font-weight: 700;
+    color: #ffffff;
+    white-space: nowrap;
+}
+
+.badge-critical { background: #7a1f1f; }
+.badge-high     { background: #b4531b; }
+.badge-medium   { background: #b8860b; }
+.badge-low      { background: #2e6a4f; }
+.badge-unknown  { background: #626d78; }
+
+.badge-status {
+    background: #e7edf3;
+    color: #24405c;
+}
+
+/* --- Сводная плашка (executive) --- */
+.summary-grid {
+    display: table;
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 12px;
+}
+
+.summary-cell {
+    display: table-cell;
+    width: 33%;
+    border: 1px solid #d5dee6;
+    padding: 10px 12px;
+    vertical-align: top;
+    text-align: center;
+}
+
+.summary-cell .metric-label {
+    font-size: 9.5pt;
+    color: #626d78;
+    display: block;
+    margin-bottom: 4px;
+}
+
+.summary-cell .metric-value {
+    font-size: 18pt;
+    font-weight: 700;
+    color: #0f2a43;
+}
+
+.summary-text {
+    white-space: pre-line;
+    margin-bottom: 8px;
+}
+
+/* --- Таблицы --- */
+table.data {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 10px;
+    font-size: 10pt;
+}
+
+table.data th,
+table.data td {
+    border: 1px solid #d5dee6;
+    padding: 6px 8px;
+    text-align: left;
+    vertical-align: top;
+}
+
+table.data th {
+    background: #eef3f8;
+    color: #24405c;
+    font-weight: 700;
+}
+
+table.data tr {
+    page-break-inside: avoid;
+}
+
+/* --- Карточки рисков --- */
+.risk-card {
+    border: 1px solid #d5dee6;
+    border-left: 4px solid #626d78;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    page-break-inside: avoid;
+}
+
+.risk-card.level-critical { border-left-color: #7a1f1f; }
+.risk-card.level-high     { border-left-color: #b4531b; }
+.risk-card.level-medium   { border-left-color: #b8860b; }
+.risk-card.level-low      { border-left-color: #2e6a4f; }
+
+.risk-card .risk-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 6px;
+}
+
+.risk-card .risk-title {
+    font-weight: 700;
+    color: #0f2a43;
+    font-size: 11.5pt;
+}
+
+.risk-card .risk-field {
+    margin-bottom: 4px;
+}
+
+.risk-card .risk-field .fld-label {
+    color: #626d78;
+    font-weight: 700;
+}
+
+.quote {
+    border-left: 3px solid #c9d4de;
+    padding: 4px 10px;
+    margin: 6px 0;
+    color: #3a4a58;
+    background: #f7f9fb;
+    font-style: italic;
+    white-space: pre-line;
+}
+
+/* --- Документы --- */
+.doc-block {
+    border: 1px solid #d5dee6;
+    padding: 10px 12px;
+    margin-bottom: 12px;
+    page-break-inside: avoid;
+}
+
+.doc-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 6px;
+}
+
+.completeness-bar {
+    height: 10px;
+    background: #e7edf3;
+    border-radius: 5px;
+    overflow: hidden;
+    margin: 4px 0 8px 0;
+}
+
+.completeness-fill {
+    height: 100%;
+    background: #2e6a4f;
+}
+
+.status-found      { color: #2e6a4f; font-weight: 700; }
+.status-not_found  { color: #b4531b; font-weight: 700; }
+.status-unclear    { color: #b8860b; font-weight: 700; }
+.status-not_applicable { color: #626d78; }
+
+/* --- Рекомендации --- */
+.rec-group {
+    margin-bottom: 12px;
+}
+
+.rec-group h3 {
+    margin-bottom: 6px;
+}
+
+.rec-priority-urgent h3   { color: #7a1f1f; }
+.rec-priority-soon h3     { color: #b4531b; }
+.rec-priority-optional h3 { color: #2e6a4f; }
+
+/* --- Коммерческое предложение --- */
+.offer-text {
+    white-space: pre-line;
+    margin-bottom: 14px;
+}
+
+.package-card {
+    border: 1px solid #d5dee6;
+    border-top: 3px solid #0f2a43;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    page-break-inside: avoid;
+}
+
+.package-card .pkg-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 4px;
+}
+
+.package-card .pkg-title {
+    font-weight: 700;
+    color: #0f2a43;
+    font-size: 12pt;
+}
+
+.package-card .pkg-price {
+    font-weight: 700;
+    color: #24405c;
+    white-space: nowrap;
+}
+
+.package-card .pkg-duration {
+    color: #626d78;
+    font-size: 9.5pt;
+    margin-bottom: 6px;
+}
+
+/* --- Ограничения --- */
+.scope-list li {
+    color: #3a4a58;
+}
+
+.footer-note {
+    margin-top: 18px;
+    padding-top: 10px;
+    border-top: 1px solid #d5dee6;
+    font-size: 9pt;
+    color: #626d78;
+}
+
+.empty-note {
+    color: #626d78;
+    font-style: italic;
+}

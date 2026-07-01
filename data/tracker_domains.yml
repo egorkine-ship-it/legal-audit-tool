@@ -1,0 +1,389 @@
+# Каталог сторонних сервисов/трекеров для детектора.
+#
+# Формат:
+# providers:
+#   - provider_name: человекочитаемое имя
+#     category: analytics | marketing | chat | crm | calltracking | payment | delivery | cdn | other
+#     country_hint: RU | foreign | unknown
+#     legal_risk: low | medium | high
+#     should_be_disclosed_in_policy: true/false
+#     should_trigger_cookie_check: true/false
+#     should_trigger_cross_border_check: true/false
+#     domains: [подстроки для поиска в URL script/iframe/network]
+#     patterns: [опциональные подстроки для поиска в HTML/inline-JS: fbq, gtag и т.п.]
+#
+# Как добавить трекер: добавьте новый элемент в providers. Код менять не нужно.
+
+providers:
+  - provider_name: "Яндекс.Метрика"
+    category: analytics
+    country_hint: RU
+    legal_risk: medium
+    should_be_disclosed_in_policy: true
+    should_trigger_cookie_check: true
+    should_trigger_cross_border_check: false
+    domains: ["mc.yandex.ru", "mc.yandex.com", "yandex.ru/metrika", "metrika.yandex"]
+    patterns: ["ym(", "yandex_metrika", "Ya.Metrika", "_ym_"]
+
+  - provider_name: "Google Analytics"
+    category: analytics
+    country_hint: foreign
+    legal_risk: high
+    should_be_disclosed_in_policy: true
+    should_trigger_cookie_check: true
+    should_trigger_cross_border_check: true
+    domains: ["google-analytics.com", "analytics.google.com", "googletagmanager.com/gtag", "gtag/js"]
+    patterns: ["gtag(", "ga('create'", "GoogleAnalyticsObject", "_ga"]
+
+  - provider_name: "Google Tag Manager"
+    category: analytics
+    country_hint: foreign
+    legal_risk: high
+    should_be_disclosed_in_policy: true
+    should_trigger_cookie_check: true
+    should_trigger_cross_border_check: true
+    domains: ["googletagmanager.com", "gtm.js"]
+    patterns: ["GTM-", "dataLayer"]
+
+  - provider_name: "Meta Pixel (Facebook)"
+    category: marketing
+    country_hint: foreign
+    legal_risk: high
+    should_be_disclosed_in_policy: true
+    should_trigger_cookie_check: true
+    should_trigger_cross_border_check: true
+    domains: ["connect.facebook.net", "facebook.com/tr"]
+    patterns: ["fbq(", "_fbp", "_fbc"]
+
+  - provider_name: "TikTok Pixel"
+    category: marketing
+    country_hint: foreign
+    legal_risk: high
+    should_be_disclosed_in_policy: true
+    should_trigger_cookie_check: true
+    should_trigger_cross_border_check: true
+    domains: ["analytics.tiktok.com", "tiktok.com/i18n/pixel"]
+    patterns: ["ttq.", "TiktokAnalyticsObject"]
+
+  - provider_name: "VK Pixel / Top.Mail.ru"
+    category: marketing
+    country_hint: RU
+    legal_risk: medium
+    should_be_disclosed_in_policy: true
+    should_trigger_cookie_check: true
+    should_trigger_cross_border_check: false
+    domains: ["vk.com/rtrg", "top-fwz1.mail.ru", "top.mail.ru"]
+    patterns: ["_tmr", "VK.Retargeting", "vk_openapi"]
+
+  - provider_name: "Hotjar"
+    category: analytics
+    country_hint: foreign
+    legal_risk: high
+    should_be_disclosed_in_policy: true
+    should_trigger_cookie_check: true
+    should_trigger_cross_border_check: true
+    domains: ["hotjar.com", "static.hotjar.com", "script.hotjar.com"]
+    patterns: ["hj(", "_hjSettings"]
+
+  - provider_name: "FullStory"
+    category: analytics
+    country_hint: foreign
+    legal_risk: high
+    should_be_disclosed_in_policy: true
+    should_trigger_cookie_check: true
+    should_trigger_cross_border_check: true
+    domains: ["fullstory.com", "fs.js"]
+    patterns: ["FS.identify", "_fs_namespace"]
+
+  - provider_name: "Cloudflare Insights"
+    category: cdn
+    country_hint: foreign
+    legal_risk: medium
+    should_be_disclosed_in_policy: true
+    should_trigger_cookie_check: false
+    should_trigger_cross_border_check: true
+    domains: ["cloudflareinsights.com", "static.cloudflareinsights.com", "beacon.min.js"]
+    patterns: ["__cfBeacon"]
+
+  - provider_name: "Jivo (JivoSite)"
+    category: chat
+    country_hint: RU
+    legal_risk: medium
+    should_be_disclosed_in_policy: true
+    should_trigger_cookie_check: true
+    should_trigger_cross_border_check: false
+    domains: ["jivo.ru", "jivosite.com", "code.jivosite.com"]
+    patterns: ["jivo_api", "jivosite"]
+
+  - provider_name: "Bitrix24"
+    category: crm
+    country_hint: RU
+    legal_risk: medium
+    should_be_disclosed_in_policy: true
+    should_trigger_cookie_check: true
+    should_trigger_cross_border_check: false
+    domains: ["bitrix24", "bitrix.info", "cdn-ru.bitrix24.ru"]
+    patterns: ["b24widget", "bx24"]
+
+  - provider_name: "amoCRM"
+    category: crm
+    country_hint: RU
+    legal_risk: medium
+    should_be_disclosed_in_policy: true
+    should_trigger_cookie_check: true
+    should_trigger_cross_border_check: false
+    domains: ["amocrm.ru", "amocrm.com"]
+    patterns: ["amo_forms", "amocrm"]
+
+  - provider_name: "Calltouch"
+    category: calltracking
+    country_hint: RU
+    legal_risk: medium
+    should_be_disclosed_in_policy: true
+    should_trigger_cookie_check: true
+    should_trigger_cross_border_check: false
+    domains: ["calltouch.ru", "mod.calltouch.ru"]
+    patterns: ["ct('", "calltouch"]
+
+  - provider_name: "Roistat"
+    category: calltracking
+    country_hint: RU
+    legal_risk: medium
+    should_be_disclosed_in_policy: true
+    should_trigger_cookie_check: true
+    should_trigger_cross_border_check: false
+    domains: ["roistat.com", "cloud.roistat.com"]
+    patterns: ["roistat"]
+
+  - provider_name: "Carrot quest"
+    category: chat
+    country_hint: RU
+    legal_risk: medium
+    should_be_disclosed_in_policy: true
+    should_trigger_cookie_check: true
+    should_trigger_cross_border_check: false
+    domains: ["carrotquest.io", "carrotquest.app"]
+    patterns: ["carrotquest"]
+
+  - provider_name: "Mindbox"
+    category: marketing
+    country_hint: RU
+    legal_risk: medium
+    should_be_disclosed_in_policy: true
+    should_trigger_cookie_check: true
+    should_trigger_cross_border_check: false
+    domains: ["mindbox.ru", "mindbox.cloud", "api.mindbox.ru"]
+    patterns: ["mindbox"]
+
+  - provider_name: "Unisender"
+    category: marketing
+    country_hint: RU
+    legal_risk: medium
+    should_be_disclosed_in_policy: true
+    should_trigger_cookie_check: false
+    should_trigger_cross_border_check: false
+    domains: ["unisender.com", "unisender.ru"]
+    patterns: ["unisender"]
+
+  - provider_name: "Sendsay"
+    category: marketing
+    country_hint: RU
+    legal_risk: medium
+    should_be_disclosed_in_policy: true
+    should_trigger_cookie_check: false
+    should_trigger_cross_border_check: false
+    domains: ["sendsay.ru"]
+    patterns: ["sendsay"]
+
+  - provider_name: "Envybox"
+    category: calltracking
+    country_hint: RU
+    legal_risk: medium
+    should_be_disclosed_in_policy: true
+    should_trigger_cookie_check: true
+    should_trigger_cross_border_check: false
+    domains: ["envybox.io", "envycdn.com"]
+    patterns: ["envybox"]
+
+  # --- Платёжные сервисы ---
+  - provider_name: "ЮKassa (YooKassa)"
+    category: payment
+    country_hint: RU
+    legal_risk: medium
+    should_be_disclosed_in_policy: true
+    should_trigger_cookie_check: false
+    should_trigger_cross_border_check: false
+    domains: ["yookassa.ru", "yoomoney.ru", "money.yandex.ru"]
+    patterns: ["yookassa"]
+
+  - provider_name: "Robokassa"
+    category: payment
+    country_hint: RU
+    legal_risk: medium
+    should_be_disclosed_in_policy: true
+    should_trigger_cookie_check: false
+    should_trigger_cross_border_check: false
+    domains: ["robokassa"]
+    patterns: ["robokassa"]
+
+  - provider_name: "CloudPayments"
+    category: payment
+    country_hint: RU
+    legal_risk: medium
+    should_be_disclosed_in_policy: true
+    should_trigger_cookie_check: false
+    should_trigger_cross_border_check: false
+    domains: ["cloudpayments.ru", "cloudpayments.eu"]
+    patterns: ["cloudpayments"]
+
+  - provider_name: "Тинькофф Касса"
+    category: payment
+    country_hint: RU
+    legal_risk: medium
+    should_be_disclosed_in_policy: true
+    should_trigger_cookie_check: false
+    should_trigger_cross_border_check: false
+    domains: ["securepay.tinkoff.ru", "tinkoff.ru"]
+    patterns: ["tinkoff"]
+
+  - provider_name: "Сбербанк / SberPay"
+    category: payment
+    country_hint: RU
+    legal_risk: medium
+    should_be_disclosed_in_policy: true
+    should_trigger_cookie_check: false
+    should_trigger_cross_border_check: false
+    domains: ["securepayments.sberbank.ru", "3dsec.sberbank.ru"]
+    patterns: ["sberbank"]
+
+  - provider_name: "PayKeeper"
+    category: payment
+    country_hint: RU
+    legal_risk: medium
+    should_be_disclosed_in_policy: true
+    should_trigger_cookie_check: false
+    should_trigger_cross_border_check: false
+    domains: ["paykeeper"]
+    patterns: ["paykeeper"]
+
+  - provider_name: "Stripe"
+    category: payment
+    country_hint: foreign
+    legal_risk: high
+    should_be_disclosed_in_policy: true
+    should_trigger_cookie_check: false
+    should_trigger_cross_border_check: true
+    domains: ["stripe.com", "js.stripe.com"]
+    patterns: ["Stripe("]
+
+  - provider_name: "PayPal"
+    category: payment
+    country_hint: foreign
+    legal_risk: high
+    should_be_disclosed_in_policy: true
+    should_trigger_cookie_check: false
+    should_trigger_cross_border_check: true
+    domains: ["paypal.com", "paypalobjects.com"]
+    patterns: ["paypal"]
+
+  # --- Доставка ---
+  - provider_name: "СДЭК (CDEK)"
+    category: delivery
+    country_hint: RU
+    legal_risk: low
+    should_be_disclosed_in_policy: true
+    should_trigger_cookie_check: false
+    should_trigger_cross_border_check: false
+    domains: ["cdek.ru", "edu.cdek.ru", "widget.cdek.ru"]
+    patterns: ["cdek"]
+
+  - provider_name: "Boxberry"
+    category: delivery
+    country_hint: RU
+    legal_risk: low
+    should_be_disclosed_in_policy: true
+    should_trigger_cookie_check: false
+    should_trigger_cross_border_check: false
+    domains: ["boxberry.ru", "boxberry.de"]
+    patterns: ["boxberry"]
+
+  - provider_name: "Dostavista"
+    category: delivery
+    country_hint: RU
+    legal_risk: low
+    should_be_disclosed_in_policy: true
+    should_trigger_cookie_check: false
+    should_trigger_cross_border_check: false
+    domains: ["dostavista.ru"]
+    patterns: ["dostavista"]
+
+  - provider_name: "Яндекс.Доставка"
+    category: delivery
+    country_hint: RU
+    legal_risk: low
+    should_be_disclosed_in_policy: true
+    should_trigger_cookie_check: false
+    should_trigger_cross_border_check: false
+    domains: ["delivery.yandex.ru", "delivery.yandex"]
+    patterns: ["yandex.delivery"]
+
+# Известные аналитические/маркетинговые cookie-имена — для проверки
+# «cookies до согласия» (Cookie_006). Сопоставляются по префиксу имени cookie.
+tracking_cookie_names:
+  - name: "_ym_uid"
+    provider: "Яндекс.Метрика"
+    category: analytics
+  - name: "_ym_d"
+    provider: "Яндекс.Метрика"
+    category: analytics
+  - name: "_ym_isad"
+    provider: "Яндекс.Метрика"
+    category: analytics
+  - name: "_ga"
+    provider: "Google Analytics"
+    category: analytics
+  - name: "_gid"
+    provider: "Google Analytics"
+    category: analytics
+  - name: "_gcl_au"
+    provider: "Google Ads"
+    category: marketing
+  - name: "_fbp"
+    provider: "Meta Pixel"
+    category: marketing
+  - name: "_fbc"
+    provider: "Meta Pixel"
+    category: marketing
+  - name: "_tt_enable_cookie"
+    provider: "TikTok Pixel"
+    category: marketing
+  - name: "_ttp"
+    provider: "TikTok Pixel"
+    category: marketing
+  - name: "roistat"
+    provider: "Roistat"
+    category: marketing
+  - name: "_roistat"
+    provider: "Roistat"
+    category: marketing
+  - name: "calltouch"
+    provider: "Calltouch"
+    category: marketing
+  - name: "_ct_"
+    provider: "Calltouch"
+    category: marketing
+  - name: "_hjSession"
+    provider: "Hotjar"
+    category: analytics
+  - name: "_hjid"
+    provider: "Hotjar"
+    category: analytics
+  - name: "mindbox"
+    provider: "Mindbox"
+    category: marketing
+  - name: "tmr_"
+    provider: "Top.Mail.ru / VK"
+    category: marketing
+  - name: "carrotquest"
+    provider: "Carrot quest"
+    category: marketing

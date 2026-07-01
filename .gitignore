@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Secrets / local config
+.env
+.env.*
+!.env.example
+data/app_settings.json
+
+# Local data / exports (не коммитим базы и PDF)
+data/database.sqlite
+exports/pdf/*
+!exports/pdf/.gitkeep
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Прочее из этой рабочей папки, не относящееся к проекту
+nexora_video/

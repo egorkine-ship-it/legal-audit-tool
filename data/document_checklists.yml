@@ -1,0 +1,597 @@
+# Чек-листы анализа документов сайта.
+#
+# Используются как эвристическим анализатором (legal/checklist_engine.py), так и
+# для формирования запроса к LLM (llm/prompts.py). Формулировки — нейтральные:
+# «признак риска», а не «нарушение».
+#
+# Поля элемента:
+#   id            — код пункта
+#   label         — краткое название
+#   description   — что проверяем (идёт в подсказку LLM)
+#   keywords      — ключевые слова/фразы для эвристического поиска (match=any)
+#   risk_if_missing — low | medium | high | critical
+#   applies_when  — условие применимости (иначе not_applicable). Возможные значения:
+#                   always | has_pd_forms | has_forms | trackers_present |
+#                   foreign_trackers_present | cookies_present | newsletter_form |
+#                   file_upload | medical | children | hr | ecommerce | finance |
+#                   publishes_people
+#   special       — (опц.) код спец-обработчика сопоставления с фактами сканирования
+#
+# Как добавить пункт: добавьте элемент в нужный список. Код менять не обязательно —
+# новый пункт будет проверяться эвристикой по keywords и уйдёт в LLM.
+
+checklists:
+
+  # =========================================================================
+  # ЧЕК-ЛИСТ 1: ПОЛИТИКА ОБРАБОТКИ ПДН
+  # =========================================================================
+  privacy_policy:
+    - id: PP_001
+      label: "Документ доступен публично"
+      description: "Политика найдена и открывается без авторизации."
+      keywords: ["персональн", "обработк", "политика", "конфиденциальн"]
+      risk_if_missing: high
+      applies_when: always
+      special: doc_accessible
+
+    - id: PP_002
+      label: "Ссылка на политику рядом с формами"
+      description: "Если на сайте есть формы, есть ли ссылка на политику рядом с формой или хотя бы в footer/header."
+      keywords: []
+      risk_if_missing: high
+      applies_when: has_pd_forms
+      special: policy_near_forms
+
+    - id: PP_003
+      label: "Наименование оператора"
+      description: "Указан оператор: ООО/АО/ИП/самозанятый/физлицо, 'оператором является', 'владелец сайта'."
+      keywords: ["оператор", "ооо", "оао", "ао ", "индивидуальный предприниматель", "ип ", "самозанят", "владелец сайта", "наименование оператора"]
+      risk_if_missing: high
+      applies_when: always
+
+    - id: PP_004
+      label: "ИНН/ОГРН/ОГРНИП"
+      description: "Присутствуют реквизиты для идентификации оператора (ИНН 10/12, ОГРН 13, ОГРНИП 15)."
+      keywords: ["инн", "огрн", "огрнип"]
+      risk_if_missing: medium
+      applies_when: always
+      special: inn_ogrn
+
+    - id: PP_005
+      label: "Адрес/место нахождения оператора"
+      description: "Юридический/почтовый адрес, адрес места нахождения оператора."
+      keywords: ["юридический адрес", "адрес места нахождения", "почтовый адрес", "адрес оператора", "место нахождения", "г. ", "город"]
+      risk_if_missing: high
+      applies_when: always
+
+    - id: PP_006
+      label: "Контакт для обращений субъектов ПДн"
+      description: "Email/адрес/телефон/форма для обращений по вопросам обработки ПДн."
+      keywords: ["по вопросам обработки", "обращени", "запрос", "электронн", "e-mail", "email", "почт", "телефон", "связаться"]
+      risk_if_missing: medium
+      applies_when: always
+
+    - id: PP_007
+      label: "Ответственный за организацию обработки ПДн"
+      description: "Указан ответственный за организацию обработки ПДн и его контакт."
+      keywords: ["ответственный за организацию обработки", "ответственн"]
+      risk_if_missing: low
+      applies_when: always
+
+    - id: PP_008
+      label: "Правовые основания обработки"
+      description: "Указаны основания: согласие субъекта, договор, закон, исполнение договора."
+      keywords: ["правовые основания", "основани", "согласие субъекта", "на основании", "федеральн", "договор", "152-фз", "конституц"]
+      risk_if_missing: high
+      applies_when: always
+
+    - id: PP_009
+      label: "Цели обработки"
+      description: "Перечислены конкретные цели (заявки, обратная связь, договор, доставка, рассылка, аналитика и т.п.), а не 'любые законные цели'."
+      keywords: ["цел", "в целях", "для обработки заявок", "обратной связи", "заключени", "исполнени договор", "доставк", "рассылк", "аналитик"]
+      risk_if_missing: high
+      applies_when: always
+
+    - id: PP_010
+      label: "Категории субъектов ПДн"
+      description: "Указаны категории субъектов: пользователи, клиенты, кандидаты, подписчики, пациенты и т.п."
+      keywords: ["категории субъект", "пользовател", "клиент", "кандидат", "подписчик", "пациент", "учащ", "покупател", "посетител", "контрагент"]
+      risk_if_missing: high
+      applies_when: always
+
+    - id: PP_011
+      label: "Категории и перечень ПДн"
+      description: "Есть перечень обрабатываемых ПДн (ФИО, телефон, email, адрес, IP, cookie ID и т.п.), не только 'иные данные'."
+      keywords: ["перечень", "фамили", "имя", "телефон", "адрес электронной", "ip-адрес", "cookie", "дата рождения", "категории персональных данных"]
+      risk_if_missing: high
+      applies_when: always
+
+    - id: PP_012
+      label: "Соответствие политики фактическим формам"
+      description: "Перечень ПДн в политике покрывает поля, которые фактически собирают формы сайта."
+      keywords: []
+      risk_if_missing: high
+      applies_when: has_pd_forms
+      special: policy_matches_forms
+
+    - id: PP_013
+      label: "Перечень действий с ПДн"
+      description: "Указаны действия: сбор, запись, систематизация, хранение, использование, передача, удаление, уничтожение и др."
+      keywords: ["сбор", "запись", "систематизац", "накоплен", "хранени", "уточнени", "извлечени", "использовани", "передач", "обезличивани", "блокировани", "удалени", "уничтожени"]
+      risk_if_missing: medium
+      applies_when: always
+
+    - id: PP_014
+      label: "Способы обработки"
+      description: "Указано: автоматизированная/неавтоматизированная/смешанная обработка."
+      keywords: ["автоматизированн", "без использования средств автоматизации", "с использованием средств автоматизации", "смешанн"]
+      risk_if_missing: medium
+      applies_when: always
+
+    - id: PP_015
+      label: "Сроки обработки и хранения"
+      description: "Указаны сроки: срок действия согласия, до достижения целей, до отзыва, срок хранения."
+      keywords: ["срок", "до достижения цел", "до отзыва", "срок хранени", "срок действия согласия", "срок договора", "хранятся в течение"]
+      risk_if_missing: high
+      applies_when: always
+
+    - id: PP_016
+      label: "Порядок прекращения обработки и уничтожения"
+      description: "Описан порядок прекращения обработки и уничтожения/удаления/блокирования ПДн."
+      keywords: ["прекращени обработк", "уничтожени", "удалени", "блокировани", "по достижении цел", "отзыв согласия"]
+      risk_if_missing: high
+      applies_when: always
+
+    - id: PP_017
+      label: "Права субъекта ПДн"
+      description: "Перечислены права: доступ, уточнение, блокирование, уничтожение, отзыв согласия, обжалование, обращение в Роскомнадзор."
+      keywords: ["права субъект", "право на", "уточнени", "блокировани", "отзыв", "обжаловани", "роскомнадзор", "получение информации"]
+      risk_if_missing: high
+      applies_when: always
+
+    - id: PP_018
+      label: "Порядок отзыва согласия"
+      description: "Описан способ и порядок отзыва согласия (email/адрес/заявление, сроки)."
+      keywords: ["отзыв согласия", "отозвать согласие", "направить заявление", "порядок отзыва"]
+      risk_if_missing: high
+      applies_when: always
+
+    - id: PP_019
+      label: "Третьи лица / обработчики"
+      description: "Раскрыты третьи лица/обработчики по поручению (хостинг, CRM, рассылки, аналитика, платежи, доставка)."
+      keywords: ["третьи лиц", "обработчик", "по поручению", "хостинг", "crm", "аналитик", "платёжн", "платежн", "доставк"]
+      risk_if_missing: high
+      applies_when: always
+      special: third_parties
+
+    - id: PP_020
+      label: "Трансграничная передача"
+      description: "Раскрыта трансграничная передача ПДн, если используются иностранные сервисы."
+      keywords: ["трансгранич", "за пределы российской федерации", "иностранн", "иностранное государство"]
+      risk_if_missing: high
+      applies_when: always
+      special: cross_border
+
+    - id: PP_021
+      label: "Локализация баз данных в РФ"
+      description: "Упомянута локализация записи/хранения ПДн граждан РФ на территории РФ."
+      keywords: ["на территории российской федерации", "локализац", "базы данных", "на территории рф"]
+      risk_if_missing: medium
+      applies_when: has_pd_forms
+
+    - id: PP_022
+      label: "Cookies и метрические программы"
+      description: "Если трекеры найдены — раскрыты ли cookies/метрики/IP/идентификаторы в политике."
+      keywords: ["cookie", "куки", "метрик", "ip-адрес", "идентификатор", "яндекс.метрика", "google analytics", "статистик"]
+      risk_if_missing: high
+      applies_when: trackers_present
+
+    - id: PP_023
+      label: "Цели использования cookies"
+      description: "Указаны цели cookies: аналитика, статистика, персонализация, реклама, безопасность."
+      keywords: ["аналитик", "статистик", "персонализац", "реклам", "маркетинг", "безопасност", "функциональн"]
+      risk_if_missing: medium
+      applies_when: cookies_present
+
+    - id: PP_024
+      label: "Сведения о cookie-провайдерах"
+      description: "Обнаруженные провайдеры (Метрика, GTM, Meta, VK и т.п.) упомянуты в политике."
+      keywords: []
+      risk_if_missing: high
+      applies_when: trackers_present
+      special: cookie_providers
+
+    - id: PP_025
+      label: "Меры защиты ПДн"
+      description: "Указаны организационные и технические меры защиты ПДн."
+      keywords: ["организационные и технические меры", "меры", "защит", "несанкционированн", "конфиденциальн", "ssl", "tls", "доступ ограничен"]
+      risk_if_missing: medium
+      applies_when: always
+
+    - id: PP_026
+      label: "Дата/версия документа"
+      description: "Есть дата утверждения/обновления или версия документа."
+      keywords: ["утвержд", "дата", "версия", "редакция", "от 20", "«__»"]
+      risk_if_missing: low
+      applies_when: always
+      special: doc_date
+
+    - id: PP_027
+      label: "Специальные категории ПДн"
+      description: "Для медицинских/чувствительных данных раскрыты спец. категории ПДн или указано, что не собираются."
+      keywords: ["специальны категори", "состояни здоровья", "здоровь", "медицинск"]
+      risk_if_missing: high
+      applies_when: medical
+
+    - id: PP_028
+      label: "Биометрические ПДн"
+      description: "При загрузке фото/видео/идентификации по лицу/голосу — раскрыта биометрия."
+      keywords: ["биометрическ", "изображени", "фото", "голос"]
+      risk_if_missing: medium
+      applies_when: file_upload
+
+    - id: PP_029
+      label: "Данные несовершеннолетних"
+      description: "Для детских/образовательных сайтов — раскрыта обработка данных детей/родителей/законных представителей."
+      keywords: ["несовершеннолетн", "дет", "родител", "законны представител", "законного представителя"]
+      risk_if_missing: high
+      applies_when: children
+
+    - id: PP_030
+      label: "Распространение ПДн"
+      description: "Если сайт публикует отзывы/фото/профили людей — раскрыты ли ПДн, разрешённые для распространения."
+      keywords: ["распространени", "разрешенны субъектом для распространения", "разрешённые для распространения"]
+      risk_if_missing: medium
+      applies_when: publishes_people
+
+    - id: PP_031
+      label: "Отсутствие шаблонных плейсхолдеров"
+      description: "В документе нет незаполненных шаблонных полей ([указать], {{company}}, «Ромашка», ИНН ___)."
+      keywords: []
+      risk_if_missing: high
+      applies_when: always
+      special: placeholders
+
+    - id: PP_032
+      label: "Отсутствие конфликта с данными сайта"
+      description: "Оператор/домен в политике совпадает с компанией/доменом сайта."
+      keywords: []
+      risk_if_missing: critical
+      applies_when: always
+      special: company_conflict
+
+  # =========================================================================
+  # ЧЕК-ЛИСТ 2: СОГЛАСИЕ НА ОБРАБОТКУ ПДН
+  # =========================================================================
+  consent:
+    - id: Consent_001
+      label: "Отдельный текст согласия найден"
+      description: "Есть отдельная страница/модалка/текст согласия, а не только политика."
+      keywords: ["согласие на обработку", "даю согласие", "согласие субъекта"]
+      risk_if_missing: high
+      applies_when: always
+
+    - id: Consent_002
+      label: "Согласие оформлено отдельно"
+      description: "Согласие не объединено с офертой/рассылкой/пользовательским соглашением."
+      keywords: []
+      risk_if_missing: high
+      applies_when: always
+      special: consent_separate
+
+    - id: Consent_003
+      label: "Согласие связано с конкретной целью"
+      description: "Цель согласия соответствует форме (заявка, запись, покупка, подписка, резюме)."
+      keywords: ["в целях", "для", "цель"]
+      risk_if_missing: medium
+      applies_when: always
+
+    - id: Consent_004
+      label: "Оператор указан"
+      description: "В согласии указаны наименование/ФИО и адрес оператора."
+      keywords: ["оператор", "ооо", "ип ", "адрес"]
+      risk_if_missing: high
+      applies_when: always
+
+    - id: Consent_005
+      label: "Цель обработки указана"
+      description: "Указана цель обработки ПДн."
+      keywords: ["цель обработк", "в целях"]
+      risk_if_missing: high
+      applies_when: always
+
+    - id: Consent_006
+      label: "Перечень ПДн указан"
+      description: "Перечень ПДн в согласии соответствует полям формы."
+      keywords: ["фамили", "имя", "телефон", "email", "e-mail", "адрес", "перечень"]
+      risk_if_missing: high
+      applies_when: always
+      special: policy_matches_forms
+
+    - id: Consent_007
+      label: "Перечень действий с ПДн указан"
+      description: "Указаны действия: сбор, хранение, использование, передача, удаление и т.п."
+      keywords: ["сбор", "хранени", "использовани", "передач", "удалени", "уничтожени", "обработк"]
+      risk_if_missing: medium
+      applies_when: always
+
+    - id: Consent_008
+      label: "Срок действия согласия указан"
+      description: "Указан срок/условие: до достижения цели, до отзыва, N лет, срок договора."
+      keywords: ["срок", "до достижения цел", "до отзыва", "в течение"]
+      risk_if_missing: high
+      applies_when: always
+
+    - id: Consent_009
+      label: "Способ отзыва согласия указан"
+      description: "Указан способ отзыва (email/адрес/заявление)."
+      keywords: ["отзыв", "отозвать", "заявлени"]
+      risk_if_missing: high
+      applies_when: always
+
+    - id: Consent_010
+      label: "Обработчики по поручению указаны"
+      description: "Если есть CRM/рассылки/аналитика/чат — согласие раскрывает обработчиков."
+      keywords: ["третьи лиц", "обработчик", "по поручению", "передач"]
+      risk_if_missing: medium
+      applies_when: trackers_present
+
+    - id: Consent_011
+      label: "Чекбокс не проставлен заранее"
+      description: "Чекбокс согласия рядом с формой не является предустановленным (prechecked)."
+      keywords: []
+      risk_if_missing: high
+      applies_when: has_pd_forms
+      special: consent_prechecked
+
+    - id: Consent_012
+      label: "Ссылка на согласие кликабельна"
+      description: "Ссылка на согласие/политику рядом с формой открывается (не 404)."
+      keywords: []
+      risk_if_missing: high
+      applies_when: has_pd_forms
+      special: consent_link_clickable
+
+    - id: Consent_013
+      label: "Согласие не заменено фразой 'нажимая кнопку'"
+      description: "Согласие оформлено чекбоксом, а не только фразой 'нажимая кнопку, вы соглашаетесь'."
+      keywords: []
+      risk_if_missing: medium
+      applies_when: has_pd_forms
+      special: button_acceptance
+
+    - id: Consent_014
+      label: "Согласие на специальные категории"
+      description: "Для медицинских/чувствительных форм есть отдельное согласие/механика для спец. категорий."
+      keywords: ["специальны категори", "состояни здоровья", "здоровь"]
+      risk_if_missing: critical
+      applies_when: medical
+
+    - id: Consent_015
+      label: "Согласие на файлы/резюме"
+      description: "Для форм загрузки файла/резюме раскрыто, какие данные могут быть в файле и цель обработки кандидата."
+      keywords: ["резюме", "файл", "документ", "кандидат"]
+      risk_if_missing: high
+      applies_when: file_upload
+
+  # =========================================================================
+  # ЧЕК-ЛИСТ 3: СОГЛАСИЕ НА РЕКЛАМНУЮ РАССЫЛКУ
+  # =========================================================================
+  ad_consent:
+    - id: Ad_001
+      label: "Форма подписки/маркетинга найдена"
+      description: "Есть форма подписки/маркетинговой коммуникации."
+      keywords: ["подписаться", "подписк", "рассылк", "новости", "акци", "скидк", "спецпредложени", "промокод"]
+      risk_if_missing: medium
+      applies_when: newsletter_form
+      special: newsletter_present
+
+    - id: Ad_002
+      label: "Отдельное согласие на рекламу"
+      description: "Для формы подписки есть отдельное согласие на рекламу (не объединено с согласием на ПДн)."
+      keywords: ["согласие на получение рекламы", "рекламн", "рекламная рассылка", "маркетингов"]
+      risk_if_missing: high
+      applies_when: newsletter_form
+
+    - id: Ad_003
+      label: "Указаны каналы рассылки"
+      description: "Указаны каналы: email, SMS, телефон, мессенджеры, push, звонки."
+      keywords: ["email", "e-mail", "sms", "смс", "телефон", "мессенджер", "push", "звонк"]
+      risk_if_missing: medium
+      applies_when: newsletter_form
+
+    - id: Ad_004
+      label: "Указан рекламодатель/отправитель"
+      description: "Указан отправитель/рекламодатель."
+      keywords: ["рекламодател", "отправител", "оператор"]
+      risk_if_missing: medium
+      applies_when: newsletter_form
+
+    - id: Ad_005
+      label: "Указан способ отказа от рассылки"
+      description: "Есть способ отказа: отписаться, unsubscribe, направить отказ."
+      keywords: ["отписаться", "unsubscribe", "отказ", "прекратить рассылк", "отписк"]
+      risk_if_missing: high
+      applies_when: newsletter_form
+
+    - id: Ad_006
+      label: "Чекбокс рекламы не prechecked"
+      description: "Чекбокс согласия на рекламу не является предустановленным."
+      keywords: []
+      risk_if_missing: high
+      applies_when: newsletter_form
+      special: consent_prechecked
+
+    - id: Ad_007
+      label: "Реклама не является условием услуги"
+      description: "Согласие на рекламу не обязательно для получения основной услуги."
+      keywords: []
+      risk_if_missing: medium
+      applies_when: newsletter_form
+      special: needs_manual
+
+  # =========================================================================
+  # ЧЕК-ЛИСТ 4: COOKIE POLICY И COOKIE-БАННЕР
+  # =========================================================================
+  cookie_policy:
+    - id: Cookie_001
+      label: "Cookie-баннер при первом посещении"
+      description: "Если есть cookies/трекеры — присутствует cookie-баннер."
+      keywords: []
+      risk_if_missing: high
+      applies_when: cookies_present
+      special: cookie_banner
+
+    - id: Cookie_002
+      label: "Уведомление о cookies в баннере"
+      description: "В баннере есть понятное упоминание cookies/куки/метрических программ."
+      keywords: ["cookie", "куки", "файлы cookie", "метрическ"]
+      risk_if_missing: high
+      applies_when: cookies_present
+      special: cookie_banner_notice
+
+    - id: Cookie_003
+      label: "Активное действие согласия в баннере"
+      description: "В баннере есть кнопка согласия (принять/согласен/разрешить/accept)."
+      keywords: ["принять", "согласен", "разрешить", "accept", "agree", "хорошо", "ок"]
+      risk_if_missing: medium
+      applies_when: cookies_present
+      special: cookie_banner_action
+
+    - id: Cookie_004
+      label: "Ссылка на политику в баннере"
+      description: "В баннере есть ссылка на политику ПДн или cookie policy."
+      keywords: ["политик", "cookie", "подробн"]
+      risk_if_missing: high
+      applies_when: cookies_present
+      special: cookie_banner_link
+
+    - id: Cookie_005
+      label: "Возможность отказаться/настроить cookie"
+      description: "Есть возможность отказаться или настроить cookie (сигнал качества)."
+      keywords: ["отклонить", "настроить", "отказаться", "только необходимые", "управление cookie"]
+      risk_if_missing: medium
+      applies_when: cookies_present
+      special: needs_manual
+
+    - id: Cookie_006
+      label: "Аналитические/маркетинговые cookies до согласия"
+      description: "До клика по баннеру не уходят запросы в analytics/marketing и не ставятся трекинг-cookies."
+      keywords: []
+      risk_if_missing: high
+      applies_when: cookies_present
+      special: cookies_before_consent
+
+    - id: Cookie_007
+      label: "Cookie policy / раздел о cookies найден"
+      description: "Есть cookie policy или раздел о cookies в политике."
+      keywords: ["cookie", "куки", "файлы cookie", "политика cookie", "использование cookie"]
+      risk_if_missing: medium
+      applies_when: cookies_present
+
+    - id: Cookie_008
+      label: "Типы cookies указаны"
+      description: "Указаны типы cookies: необходимые/функциональные/аналитические/маркетинговые."
+      keywords: ["необходим", "функциональн", "аналитическ", "маркетингов", "рекламн"]
+      risk_if_missing: medium
+      applies_when: cookies_present
+
+    - id: Cookie_009
+      label: "Цели обработки cookies"
+      description: "Указаны цели обработки cookies."
+      keywords: ["цел", "аналитик", "статистик", "персонализац", "реклам"]
+      risk_if_missing: medium
+      applies_when: cookies_present
+
+    - id: Cookie_010
+      label: "Провайдеры cookies/метрик указаны"
+      description: "Обнаруженные провайдеры указаны в cookie policy/политике."
+      keywords: []
+      risk_if_missing: high
+      applies_when: trackers_present
+      special: cookie_providers
+
+    - id: Cookie_011
+      label: "Сроки хранения cookies"
+      description: "Указаны сроки хранения cookies."
+      keywords: ["срок", "хранени", "сессионн", "постоянн", "дн", "месяц", "год"]
+      risk_if_missing: medium
+      applies_when: cookies_present
+
+    - id: Cookie_012
+      label: "Способ отключения cookies"
+      description: "Есть инструкция отключения cookies через браузер/настройки/отзыв."
+      keywords: ["отключ", "браузер", "настройк", "удалить cookie", "запретить cookie"]
+      risk_if_missing: low
+      applies_when: cookies_present
+
+    - id: Cookie_013
+      label: "Нет конфликта баннера и фактических cookies"
+      description: "Баннер не заявляет 'только необходимые cookies' при найденных маркетинговых/аналитических."
+      keywords: []
+      risk_if_missing: high
+      applies_when: trackers_present
+      special: cookie_banner_conflict
+
+  # =========================================================================
+  # ЧЕК-ЛИСТ 5: ОФЕРТА / ПОЛЬЗОВАТЕЛЬСКОЕ СОГЛАШЕНИЕ
+  # =========================================================================
+  offer:
+    - id: Offer_001
+      label: "Оферта найдена (для онлайн-продаж)"
+      description: "Если сайт продаёт товары/услуги онлайн — оферта найдена."
+      keywords: ["оферта", "публичная оферта", "договор", "offer"]
+      risk_if_missing: medium
+      applies_when: ecommerce
+      special: doc_accessible
+
+    - id: Offer_002
+      label: "Указан продавец/исполнитель"
+      description: "В оферте указан продавец/исполнитель."
+      keywords: ["продавец", "исполнител", "оператор", "ооо", "ип "]
+      risk_if_missing: medium
+      applies_when: always
+
+    - id: Offer_003
+      label: "Реквизиты продавца"
+      description: "Указаны реквизиты: ИНН/ОГРН/адрес/email."
+      keywords: ["инн", "огрн", "адрес", "email", "e-mail", "реквизит"]
+      risk_if_missing: medium
+      applies_when: always
+      special: inn_ogrn
+
+    - id: Offer_004
+      label: "Предмет договора/описание услуги"
+      description: "Есть предмет договора/описание товара или услуги."
+      keywords: ["предмет договора", "предмет", "услуг", "товар"]
+      risk_if_missing: medium
+      applies_when: always
+
+    - id: Offer_005
+      label: "Порядок акцепта"
+      description: "Описан порядок акцепта оферты."
+      keywords: ["акцепт", "принятие условий", "заказ считается", "оформление заказа"]
+      risk_if_missing: medium
+      applies_when: always
+
+    - id: Offer_006
+      label: "Порядок оплаты/возврата/отказа"
+      description: "Описан порядок оплаты/возврата/отказа."
+      keywords: ["оплат", "возврат", "отказ", "стоимост", "цена"]
+      risk_if_missing: medium
+      applies_when: ecommerce
+
+    - id: Offer_007
+      label: "Ссылка на политику ПДн"
+      description: "В оферте есть ссылка на политику ПДн."
+      keywords: ["политик", "персональн", "конфиденциальн"]
+      risk_if_missing: medium
+      applies_when: always
+
+    - id: Offer_008
+      label: "Оферта не подменяет согласие на ПДн"
+      description: "Акцепт оферты не приравнивается автоматически к согласию на любые ПДн/рекламу."
+      keywords: []
+      risk_if_missing: medium
+      applies_when: always
+      special: needs_manual

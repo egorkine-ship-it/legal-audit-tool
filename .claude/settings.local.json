@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:www.youtube.com)",
+      "WebFetch(domain:async.com)",
+      "WebFetch(domain:tvtropes.org)",
+      "WebFetch(domain:nexoralegal.ru)",
+      "Bash(python3 -m pip list)"
+    ]
+  }
+}

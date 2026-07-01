@@ -1,0 +1,336 @@
+# Правила rule engine. Метаданные (текст, уровень, score, флаги) редактируются
+# здесь БЕЗ изменения кода. Логика условия каждого правила реализована в
+# legal/rule_engine.py как предикат с тем же id (поле `predicate`).
+#
+# Чтобы отключить правило — enabled: false.
+# Чтобы изменить формулировку/вес — правьте title/report_phrase/score/risk_level.
+# Чтобы добавить НОВОЕ правило — добавьте предикат в rule_engine.PREDICATES и
+# элемент сюда с тем же id.
+#
+# ВАЖНО про тон: report_phrase формулируется как «признак риска», а не как
+# установленное нарушение.
+
+rules:
+  - id: R001_NO_PRIVACY_POLICY
+    predicate: R001_NO_PRIVACY_POLICY
+    enabled: true
+    title: "Формы сбора ПДн есть, публичная политика обработки ПДн не найдена"
+    risk_level: critical
+    score: 35
+    legal_basis: "ст. 18.1 ч. 2 п. 2, ст. 3 152-ФЗ (обязанность опубликовать документ, определяющий политику обработки ПДн)."
+    client_friendly_explanation: "На сайте есть формы, предполагающие сбор персональных данных, но публично доступной политики обработки ПДн обнаружить не удалось."
+    recommendation: "Разработать и опубликовать политику обработки персональных данных, разместив ссылку на неё рядом с формами."
+    report_phrase: "На сайте обнаружены формы, предполагающие сбор персональных данных, однако публично доступная политика обработки персональных данных не найдена."
+    requires_manual_review: true
+
+  - id: R002_PRIVACY_NOT_LINKED_NEAR_FORM
+    predicate: R002_PRIVACY_NOT_LINKED_NEAR_FORM
+    enabled: true
+    title: "Рядом с формой нет ссылки на политику обработки ПДн"
+    risk_level: high
+    score: 25
+    legal_basis: "ст. 18.1, ст. 9 152-ФЗ (информирование субъекта и доступность политики в момент сбора ПДн)."
+    client_friendly_explanation: "Форма собирает персональные данные, но рядом с ней не найдена ссылка на политику обработки ПДн."
+    recommendation: "Разместить рядом с каждой формой видимую ссылку на политику обработки ПДн."
+    report_phrase: "Рядом с формой сбора персональных данных не обнаружена ссылка на политику обработки ПДн."
+    requires_manual_review: true
+
+  - id: R003_FORM_NO_SEPARATE_CONSENT
+    predicate: R003_FORM_NO_SEPARATE_CONSENT
+    enabled: true
+    title: "У формы с ПДн не найден отдельный механизм согласия"
+    risk_level: high
+    score: 25
+    legal_basis: "ст. 9 152-ФЗ (согласие субъекта на обработку ПДн)."
+    client_friendly_explanation: "У формы, собирающей персональные данные, не обнаружено чекбокса или отдельного текста согласия."
+    recommendation: "Добавить к форме отдельный, не предустановленный чекбокс согласия со ссылкой на политику и текст согласия."
+    report_phrase: "У формы, предполагающей сбор персональных данных, не обнаружен отдельный механизм получения согласия (чекбокс/отдельный текст)."
+    requires_manual_review: true
+
+  - id: R004_BUTTON_ACCEPTANCE_ONLY
+    predicate: R004_BUTTON_ACCEPTANCE_ONLY
+    enabled: true
+    title: "Согласие оформлено только фразой 'нажимая кнопку'"
+    risk_level: high
+    score: 20
+    legal_basis: "ст. 9 152-ФЗ (согласие должно быть конкретным, информированным и сознательным)."
+    client_friendly_explanation: "Согласие выражено только фразой 'нажимая кнопку, вы соглашаетесь', отдельный чекбокс отсутствует."
+    recommendation: "Заменить конклюдентную формулировку на отдельный чекбокс согласия."
+    report_phrase: "Согласие оформлено только формулировкой об акцепте по нажатию кнопки; отдельный чекбокс согласия не обнаружен — рекомендуется проверить достаточность такой механики."
+    requires_manual_review: true
+
+  - id: R005_PRECHECKED_CONSENT
+    predicate: R005_PRECHECKED_CONSENT
+    enabled: true
+    title: "Чекбокс согласия предустановлен (prechecked)"
+    risk_level: high
+    score: 25
+    legal_basis: "ст. 9 152-ФЗ (согласие должно быть активным действием субъекта)."
+    client_friendly_explanation: "Чекбокс согласия отмечен заранее, что не отражает активного волеизъявления субъекта."
+    recommendation: "Сделать чекбокс согласия неотмеченным по умолчанию."
+    report_phrase: "Обнаружен признак предустановленного (заранее отмеченного) чекбокса согласия — рекомендуется проверить механику получения согласия."
+    requires_manual_review: true
+
+  - id: R006_CONSENT_MERGED_WITH_OTHER_DOCUMENTS
+    predicate: R006_CONSENT_MERGED_WITH_OTHER_DOCUMENTS
+    enabled: true
+    title: "Согласие объединено с офертой/соглашением/рассылкой"
+    risk_level: high
+    score: 25
+    legal_basis: "ст. 9 152-ФЗ; ст. 18 ФЗ 'О рекламе' (раздельность согласий)."
+    client_friendly_explanation: "Согласие на обработку ПДн объединено с другими документами (оферта, пользовательское соглашение, рекламная рассылка)."
+    recommendation: "Разделить согласие на обработку ПДн, согласие на рекламу и иные документы."
+    report_phrase: "Обнаружен признак объединения согласия на обработку ПДн с иными документами (офертой/соглашением/рекламной рассылкой)."
+    requires_manual_review: true
+
+  - id: R007_PRIVACY_INCOMPLETE_OPERATOR
+    predicate: R007_PRIVACY_INCOMPLETE_OPERATOR
+    enabled: true
+    title: "В политике не идентифицирован оператор (наименование/адрес/контакт)"
+    risk_level: high
+    score: 20
+    legal_basis: "ст. 18.1, ст. 14 152-ФЗ (идентификация оператора и порядок обращения)."
+    client_friendly_explanation: "В найденной политике не удалось однозначно идентифицировать оператора: наименование, адрес или контакт для обращений."
+    recommendation: "Указать в политике полное наименование оператора, адрес и контакт для обращений субъектов ПДн."
+    report_phrase: "В политике обработки ПДн не обнаружены полные сведения об операторе (наименование/адрес/контакт для обращений)."
+    requires_manual_review: true
+
+  - id: R008_PRIVACY_INCOMPLETE_PURPOSES_DATA_CATEGORIES
+    predicate: R008_PRIVACY_INCOMPLETE_PURPOSES_DATA_CATEGORIES
+    enabled: true
+    title: "В политике нет целей или перечня ПДн/категорий субъектов"
+    risk_level: high
+    score: 25
+    legal_basis: "ст. 18.1 152-ФЗ (содержание политики: цели, категории ПДн и субъектов)."
+    client_friendly_explanation: "В политике не удалось обнаружить конкретные цели обработки либо перечень ПДн/категорий субъектов."
+    recommendation: "Дополнить политику конкретными целями обработки, перечнем ПДн и категориями субъектов."
+    report_phrase: "В политике обработки ПДн не обнаружены конкретные цели обработки и/или перечень персональных данных и категорий субъектов."
+    requires_manual_review: true
+
+  - id: R009_PRIVACY_DOES_NOT_MATCH_FORMS
+    predicate: R009_PRIVACY_DOES_NOT_MATCH_FORMS
+    enabled: true
+    title: "Политика не соответствует полям форм сайта"
+    risk_level: high
+    score: 25
+    legal_basis: "ст. 5, ст. 18.1 152-ФЗ (соответствие обработки заявленным целям и составу ПДн)."
+    client_friendly_explanation: "Формы собирают данные (телефон/email/файл/медицинские сведения), которых нет в перечне ПДн политики."
+    recommendation: "Привести перечень ПДн в политике в соответствие с фактически собираемыми полями."
+    report_phrase: "Обнаружен признак несоответствия перечня ПДн в политике фактически собираемым полям форм сайта."
+    requires_manual_review: true
+
+  - id: R010_NO_RETENTION_OR_WITHDRAWAL
+    predicate: R010_NO_RETENTION_OR_WITHDRAWAL
+    enabled: true
+    title: "Нет сроков обработки/хранения или порядка отзыва согласия"
+    risk_level: high
+    score: 20
+    legal_basis: "ст. 5, ст. 9, ст. 21 152-ФЗ (сроки обработки и отзыв согласия)."
+    client_friendly_explanation: "В документах не обнаружены сроки хранения ПДн и/или порядок отзыва согласия."
+    recommendation: "Указать сроки обработки/хранения ПДн и понятный порядок отзыва согласия."
+    report_phrase: "В документах не обнаружены сроки обработки/хранения ПДн и/или порядок отзыва согласия."
+    requires_manual_review: true
+
+  - id: R011_TRACKERS_NO_COOKIE_BANNER
+    predicate: R011_TRACKERS_NO_COOKIE_BANNER
+    enabled: true
+    title: "Найдены трекеры, но нет cookie-баннера"
+    risk_level: high
+    score: 25
+    legal_basis: "ст. 9 152-ФЗ; практика информирования об использовании cookies/метрик."
+    client_friendly_explanation: "На сайте найдены аналитические/маркетинговые трекеры, но cookie-баннер не обнаружен."
+    recommendation: "Внедрить cookie-баннер с уведомлением и ссылкой на политику; настроить загрузку трекеров после согласия."
+    report_phrase: "На сайте обнаружены аналитические/маркетинговые трекеры при отсутствии cookie-баннера — рекомендуется проверить механику информирования и согласия."
+    requires_manual_review: true
+
+  - id: R012_COOKIES_BEFORE_CONSENT
+    predicate: R012_COOKIES_BEFORE_CONSENT
+    enabled: true
+    title: "Аналитические/маркетинговые cookies до согласия"
+    risk_level: high
+    score: 25
+    legal_basis: "ст. 9 152-ФЗ (получение согласия до обработки)."
+    client_friendly_explanation: "До какого-либо согласия на сайте уже устанавливаются трекинг-cookies/уходят запросы в аналитику/рекламу."
+    recommendation: "Отложить загрузку аналитических/маркетинговых трекеров до получения согласия пользователя."
+    report_phrase: "Обнаружен признак установки аналитических/маркетинговых cookies и/или запросов к трекерам до получения согласия пользователя."
+    requires_manual_review: true
+
+  - id: R013_COOKIE_POLICY_MISSING
+    predicate: R013_COOKIE_POLICY_MISSING
+    enabled: true
+    title: "Cookies/трекеры есть, cookie policy/раздел отсутствует"
+    risk_level: high
+    score: 20
+    legal_basis: "ст. 18.1 152-ФЗ (раскрытие обработки, включая cookies/метрики)."
+    client_friendly_explanation: "Найдены cookies/трекеры, но отдельной cookie policy или раздела о cookies обнаружить не удалось."
+    recommendation: "Опубликовать cookie policy или раздел о cookies с типами, целями и провайдерами."
+    report_phrase: "На сайте обнаружены cookies/трекеры, при этом cookie policy или раздел о cookies не найден."
+    requires_manual_review: true
+
+  - id: R014_TRACKERS_NOT_DISCLOSED_IN_POLICY
+    predicate: R014_TRACKERS_NOT_DISCLOSED_IN_POLICY
+    enabled: true
+    title: "Обнаруженные трекеры не раскрыты в политике"
+    risk_level: high
+    score: 20
+    legal_basis: "ст. 18.1 152-ФЗ (раскрытие сведений об обработке и третьих лицах)."
+    client_friendly_explanation: "Обнаруженные на сайте трекеры/сервисы не упомянуты в политике."
+    recommendation: "Дополнить политику перечнем используемых аналитических/маркетинговых сервисов и их провайдеров."
+    report_phrase: "Обнаружен признак того, что используемые на сайте трекеры/сервисы не раскрыты в политике обработки ПДн."
+    requires_manual_review: true
+
+  - id: R015_FOREIGN_TRACKERS_CROSS_BORDER_NOT_DISCLOSED
+    predicate: R015_FOREIGN_TRACKERS_CROSS_BORDER_NOT_DISCLOSED
+    enabled: true
+    title: "Иностранные сервисы без раскрытия трансграничной передачи"
+    risk_level: high
+    score: 25
+    legal_basis: "ст. 12 152-ФЗ (трансграничная передача ПДн)."
+    client_friendly_explanation: "Найдены иностранные сервисы (Google/Meta/TikTok/Hotjar и т.п.), но трансграничная передача в политике не раскрыта либо указано, что её нет."
+    recommendation: "Проверить фактические потоки данных и раскрыть в политике трансграничную передачу либо исключить иностранные сервисы."
+    report_phrase: "Обнаружены иностранные сервисы при отсутствии раскрытия трансграничной передачи ПДн в политике — требуется проверка фактических потоков данных."
+    requires_manual_review: true
+
+  - id: R016_SERVER_OUTSIDE_RUSSIA_WITH_FORMS
+    predicate: R016_SERVER_OUTSIDE_RUSSIA_WITH_FORMS
+    enabled: true
+    title: "Признаки иностранной инфраструктуры при сборе ПДн"
+    risk_level: high
+    score: 20
+    legal_basis: "ст. 18 ч. 5 152-ФЗ (локализация баз данных граждан РФ на территории РФ)."
+    client_friendly_explanation: "IP-адрес сайта отнесён к иностранной инфраструктуре, при этом сайт собирает ПДн."
+    recommendation: "Проверить фактическое место первичной записи и хранения ПДн граждан РФ."
+    report_phrase: "Обнаружен технический признак риска: IP-адрес сайта относится к иностранной инфраструктуре. Это не доказывает нарушение локализации, но требует проверки фактического места первичной записи, систематизации, накопления, хранения, уточнения и извлечения ПДн граждан РФ."
+    requires_manual_review: true
+
+  - id: R017_NO_HTTPS
+    predicate: R017_NO_HTTPS
+    enabled: true
+    title: "Отсутствует HTTPS или формы отправляются по HTTP"
+    risk_level: high
+    score: 25
+    legal_basis: "ст. 19 152-ФЗ (меры защиты ПДн при обработке)."
+    client_friendly_explanation: "Сайт доступен без HTTPS либо формы отправляют данные по незащищённому соединению."
+    recommendation: "Настроить корректный HTTPS и защищённую отправку данных форм."
+    report_phrase: "Обнаружен признак отсутствия защищённого соединения (HTTPS) при сборе персональных данных."
+    requires_manual_review: true
+
+  - id: R018_MIXED_CONTENT
+    predicate: R018_MIXED_CONTENT
+    enabled: true
+    title: "Смешанный контент (mixed content)"
+    risk_level: medium
+    score: 15
+    legal_basis: "ст. 19 152-ФЗ (технические меры защиты)."
+    client_friendly_explanation: "HTTPS-страница подгружает ресурсы по HTTP, что снижает уровень защиты соединения."
+    recommendation: "Устранить загрузку ресурсов по HTTP на HTTPS-страницах."
+    report_phrase: "Обнаружен признак смешанного контента: HTTPS-страница подгружает ресурсы по HTTP."
+    requires_manual_review: true
+
+  - id: R019_NEWSLETTER_NO_AD_CONSENT
+    predicate: R019_NEWSLETTER_NO_AD_CONSENT
+    enabled: true
+    title: "Форма подписки без отдельного согласия на рекламу"
+    risk_level: high
+    score: 25
+    legal_basis: "ст. 18 ФЗ 'О рекламе' (согласие на получение рекламы)."
+    client_friendly_explanation: "Найдена форма подписки/рассылки без отдельного согласия на получение рекламы."
+    recommendation: "Добавить отдельное согласие на рекламную рассылку и способ отказа."
+    report_phrase: "Обнаружена форма подписки/рассылки без отдельного согласия на получение рекламы."
+    requires_manual_review: true
+
+  - id: R020_MEDICAL_FORM_SPECIAL_CATEGORY_RISK
+    predicate: R020_MEDICAL_FORM_SPECIAL_CATEGORY_RISK
+    enabled: true
+    title: "Медицинская форма и спец. категории ПДн"
+    risk_level: critical
+    score: 30
+    legal_basis: "ст. 10 152-ФЗ (специальные категории ПДн, включая сведения о здоровье)."
+    client_friendly_explanation: "Форма может собирать сведения о здоровье (жалобы/симптомы/комментарий), а раскрытие спец. категорий в документах не обнаружено."
+    recommendation: "Проверить механику согласия на обработку специальных категорий ПДн и раскрытие в политике."
+    report_phrase: "Обнаружены признаки сбора сведений, которые могут относиться к специальным категориям ПДн, без соответствующего раскрытия и отдельного согласия."
+    requires_manual_review: true
+
+  - id: R021_CHILDREN_DATA_RISK
+    predicate: R021_CHILDREN_DATA_RISK
+    enabled: true
+    title: "Данные несовершеннолетних без раскрытия"
+    risk_level: high
+    score: 25
+    legal_basis: "ст. 9 152-ФЗ (согласие законного представителя несовершеннолетнего)."
+    client_friendly_explanation: "Есть признаки работы с данными детей/родителей, но раскрытие обработки данных несовершеннолетних не обнаружено."
+    recommendation: "Проверить механику согласия законных представителей и раскрытие в политике."
+    report_phrase: "Обнаружены признаки обработки данных несовершеннолетних/их представителей без соответствующего раскрытия."
+    requires_manual_review: true
+
+  - id: R022_FILE_UPLOAD_RISK
+    predicate: R022_FILE_UPLOAD_RISK
+    enabled: true
+    title: "Загрузка файлов без раскрытия обработки"
+    risk_level: high
+    score: 25
+    legal_basis: "ст. 9, ст. 18.1 152-ФЗ (информирование о составе и целях обработки)."
+    client_friendly_explanation: "Форма позволяет загрузить файл/резюме, но состав и цель обработки таких данных не раскрыты."
+    recommendation: "Раскрыть в согласии/политике обработку загружаемых документов и цель обработки."
+    report_phrase: "Обнаружена форма с загрузкой файлов без раскрытия состава и целей обработки таких данных."
+    requires_manual_review: true
+
+  - id: R023_HR_RESUME_RISK
+    predicate: R023_HR_RESUME_RISK
+    enabled: true
+    title: "HR/резюме без раскрытия обработки кандидатов"
+    risk_level: high
+    score: 25
+    legal_basis: "ст. 9, ст. 5 152-ФЗ (цели и сроки обработки данных кандидатов)."
+    client_friendly_explanation: "Есть форма отклика/резюме без раскрытия целей и сроков обработки данных кандидатов."
+    recommendation: "Раскрыть цель, состав и срок хранения данных кандидатов, оформить согласие."
+    report_phrase: "Обнаружена форма отклика/резюме без раскрытия целей, состава и сроков обработки данных кандидатов."
+    requires_manual_review: true
+
+  - id: R024_OFFER_MISSING_FOR_ONLINE_SALES
+    predicate: R024_OFFER_MISSING_FOR_ONLINE_SALES
+    enabled: true
+    title: "Онлайн-продажи без публичной оферты"
+    risk_level: medium
+    score: 15
+    legal_basis: "ст. 437 ГК РФ (публичная оферта); ст. 26.1 Закона 'О защите прав потребителей'."
+    client_friendly_explanation: "Есть признаки онлайн-продаж/оплаты, но публичную оферту обнаружить не удалось."
+    recommendation: "Опубликовать публичную оферту с существенными условиями."
+    report_phrase: "Обнаружены признаки онлайн-продаж при отсутствии публичной оферты."
+    requires_manual_review: true
+
+  - id: R025_POLICY_TEMPLATE_PLACEHOLDERS
+    predicate: R025_POLICY_TEMPLATE_PLACEHOLDERS
+    enabled: true
+    title: "В документе шаблонные незаполненные поля"
+    risk_level: high
+    score: 25
+    legal_basis: "ст. 18.1 152-ФЗ (действительность и полнота политики)."
+    client_friendly_explanation: "В документе обнаружены незаполненные шаблонные поля ([указать], {{company}}, «Ромашка» и т.п.)."
+    recommendation: "Заполнить все реквизиты в документе, убрать шаблонные плейсхолдеры."
+    report_phrase: "В документе обнаружены признаки незаполненных шаблонных полей (плейсхолдеров)."
+    requires_manual_review: true
+
+  - id: R026_POLICY_OTHER_COMPANY_CONFLICT
+    predicate: R026_POLICY_OTHER_COMPANY_CONFLICT
+    enabled: true
+    title: "Политика принадлежит другой компании/домену"
+    risk_level: critical
+    score: 35
+    legal_basis: "ст. 18.1 152-ФЗ (политика должна принадлежать оператору сайта)."
+    client_friendly_explanation: "Оператор/домен, указанный в политике, расходится с компанией/доменом проверяемого сайта."
+    recommendation: "Заменить документ на политику, принадлежащую фактическому оператору сайта."
+    report_phrase: "Обнаружен признак того, что реквизиты в политике относятся к иной компании/домену, чем проверяемый сайт."
+    requires_manual_review: true
+
+  - id: R027_RKN_NOTIFICATION_CHECK_NEEDED
+    predicate: R027_RKN_NOTIFICATION_CHECK_NEEDED
+    enabled: true
+    title: "Требуется проверка уведомления РКН"
+    risk_level: medium
+    score: 10
+    legal_basis: "ст. 22 152-ФЗ (уведомление уполномоченного органа об обработке ПДн)."
+    client_friendly_explanation: "Сайт, по признакам, обрабатывает ПДн — рекомендуется проверить наличие и актуальность уведомления в реестре РКН."
+    recommendation: "Проверить наличие/актуальность уведомления оператора в реестре Роскомнадзора."
+    report_phrase: "Рекомендуется проверить наличие и актуальность уведомления оператора в реестре Роскомнадзора (автоматическая проверка реестра в данной версии не проводится)."
+    requires_manual_review: true

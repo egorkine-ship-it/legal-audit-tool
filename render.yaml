@@ -1,0 +1,47 @@
+# Render Blueprint (альтернатива Railway). Создаёт web-сервис в Docker + Postgres.
+# Деплой: Render Dashboard -> New -> Blueprint -> выберите репозиторий.
+services:
+  - type: web
+    name: legal-audit-tool
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    healthCheckPath: /_stcore/health
+    autoDeploy: true
+    envVars:
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: legal-audit-db
+          property: connectionString
+      - key: EXPORTS_DIR
+        value: /data
+      - key: ENABLE_LLM
+        value: "true"
+      - key: ENABLE_GEOIP
+        value: "false"
+      - key: ENABLE_SCREENSHOTS
+        value: "false"
+      - key: MAX_PAGES_DEFAULT
+        value: "20"
+      - key: PAGE_TIMEOUT_SECONDS
+        value: "20"
+      - key: LLM_API_KEY
+        sync: false
+      - key: LLM_BASE_URL
+        value: https://api.openai.com/v1
+      - key: LLM_MODEL
+        value: gpt-4o-mini
+    disk:
+      name: exports
+      mountPath: /data
+      sizeGB: 1
+
+databases:
+  - name: legal-audit-db
+    plan: basic-256mb
