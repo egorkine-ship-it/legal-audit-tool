@@ -35,23 +35,33 @@ _MAX_MODAL_CLICKS = 5
 def create_fetcher(settings: Settings):
     """
     Вернуть объект-fetcher с методами .fetch(url, take_screenshot=False) -> RawPage
-    и .close() -> None, а также атрибутом .method in {"playwright", "http"}.
+    и .close() -> None, а также атрибутами .method in {"playwright", "http"} и
+    .launch_error (почему Playwright недоступен; "" — если всё в порядке).
 
-    Пытается поднять Playwright; при любой проблеме — HttpFetcher.
+    Пытается поднять Playwright; при любой проблеме — HttpFetcher с заполненным
+    launch_error, чтобы причина деградации попала в отчёт.
     """
+    launch_error = ""
     try:
         fetcher = PlaywrightFetcher(settings)
         # Проверяем, что браузер реально запустился.
         if getattr(fetcher, "_browser", None) is not None:
             return fetcher
-        # Не удалось — закрываем возможные ресурсы и падаем в HTTP.
+        # Не удалось — запоминаем причину, закрываем ресурсы и падаем в HTTP.
+        launch_error = getattr(fetcher, "launch_error", "") or ""
         try:
             fetcher.close()
         except Exception:
             pass
+    except Exception as exc:
+        launch_error = repr(exc)[:300]
+    http_fetcher = HttpFetcher(settings)
+    try:
+        if launch_error:
+            http_fetcher.launch_error = launch_error
     except Exception:
         pass
-    return HttpFetcher(settings)
+    return http_fetcher
 
 
 # ---------------------------------------------------------------------------
@@ -64,26 +74,31 @@ class PlaywrightFetcher:
     """
 
     method = "playwright"
+    launch_error = ""
 
     def __init__(self, settings: Settings) -> None:
         self.method = "playwright"
         self.settings = settings
         self._playwright = None
         self._browser = None
+        # Причина недоступности браузера (для диагностики в отчёте).
+        self.launch_error = ""
         # Импорт и запуск браузера — внутри try, чтобы отсутствие библиотеки или
         # невозможность запуска не роняли создание fetcher (create_fetcher
         # проверит self._browser и откатится к HTTP).
         try:
             from playwright.sync_api import sync_playwright  # type: ignore
-        except Exception:
+        except Exception as exc:
             self._playwright = None
             self._browser = None
+            self.launch_error = repr(exc)[:300]
             return
         try:
             self._playwright = sync_playwright().start()
             self._browser = self._playwright.chromium.launch(headless=True)
-        except Exception:
-            # Не удалось запустить браузер — прибираем playwright.
+        except Exception as exc:
+            # Не удалось запустить браузер — запоминаем причину и прибираем playwright.
+            self.launch_error = repr(exc)[:300]
             self._browser = None
             try:
                 if self._playwright is not None:
@@ -119,13 +134,21 @@ class PlaywrightFetcher:
             except Exception:
                 pass
 
-            # Навигация.
+            # Навигация. Сохраняем ответ, чтобы узнать РЕАЛЬНЫЙ HTTP-статус:
+            # браузер отрисует и страницу 404 (у неё есть HTML!), но считать её
+            # «найденным документом» нельзя.
+            nav_status = 0
             try:
-                page.goto(
+                nav_response = page.goto(
                     url,
                     wait_until="domcontentloaded",
                     timeout=self.settings.page_timeout_ms,
                 )
+                if nav_response is not None:
+                    try:
+                        nav_status = int(nav_response.status or 0)
+                    except Exception:
+                        nav_status = 0
             except Exception as exc:
                 raw.errors.append(f"goto: {exc}")
 
@@ -147,6 +170,15 @@ class PlaywrightFetcher:
                     )
                     page.wait_for_timeout(350)
                 page.evaluate("window.scrollTo(0, 0)")
+            except Exception:
+                pass
+
+            # Best-effort ожидание гидрации подвала: ссылки на политику/оферту
+            # часто дорисовываются JS уже после скролла. НЕ виснем.
+            try:
+                page.wait_for_selector(
+                    "footer a, [class*='footer'] a", timeout=1500
+                )
             except Exception:
                 pass
 
@@ -226,8 +258,10 @@ class PlaywrightFetcher:
             # Сетевые запросы (уникальные, порядок сохраняем).
             raw.network_requests = utils.dedupe_keep_order(network_requests)
 
-            raw.status_code = 200
-            raw.ok = bool(raw.html)
+            # Реальный статус навигации (0 — если ответ недоступен, например
+            # при SPA-переходах; тогда считаем страницу ок при наличии HTML).
+            raw.status_code = nav_status if nav_status else (200 if raw.html else 0)
+            raw.ok = bool(raw.html) and (nav_status == 0 or 200 <= nav_status < 400)
             raw.fetch_method = "playwright"
             return raw
         except Exception as exc:
@@ -487,10 +521,14 @@ class HttpFetcher:
     """Простой fetcher поверх utils.http_get. Без JS, модалок и скриншотов."""
 
     method = "http"
+    launch_error = ""
 
     def __init__(self, settings: Settings) -> None:
         self.method = "http"
         self.settings = settings
+        # Причина, по которой Playwright оказался недоступен (заполняет
+        # create_fetcher при фолбэке); "" — если HTTP выбран осознанно.
+        self.launch_error = ""
 
     def fetch(self, url: str, take_screenshot: bool = False) -> RawPage:
         raw = RawPage(url=url, fetch_method="http")

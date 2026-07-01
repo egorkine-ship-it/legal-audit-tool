@@ -10,7 +10,7 @@ utils.http_get и извлекает текст в зависимости от �
 from __future__ import annotations
 
 import uuid
-from typing import Dict
+from typing import Any, Dict, Optional
 
 from scanner import document_parser, utils
 from scanner.models import DocCandidate, DocumentResult, Evidence, RawPage
@@ -37,14 +37,24 @@ def fetch_document(
     candidate: DocCandidate,
     raw_by_url: Dict[str, RawPage],
     settings,
+    fetcher: Optional[Any] = None,
 ) -> DocumentResult:
     """Загрузить и разобрать документ-кандидат. Возвращает DocumentResult.
 
     Логика:
       1. Если stripped url кандидата уже есть в raw_by_url и у RawPage есть html —
          переиспользуем: format="html", text = html_to_text(raw.html).
-      2. Иначе скачиваем через utils.http_get; формат определяем
+      2. Иначе, если передан fetcher с методом playwright и URL похож на
+         HTML-маршрут (не .pdf/.docx/.doc) — рендерим страницу С JS через
+         fetcher.fetch(url) (SPA-политики без JS отдают пустой html).
+      3. Иначе скачиваем через utils.http_get; формат определяем
          document_parser.detect_format; извлекаем текст.
+
+    Дополнительно: doc.link_confirmed = True, если URL реально открылся
+    (2xx на том же зарегистрированном домене) — НЕЗАВИСИМО от того, извлёкся
+    ли текст. doc.discovered_by = источник кандидата (priority_path -> "guess").
+
+    Параметр fetcher опционален — старые вызовы без него работают как раньше.
     Никогда не бросает.
     """
     doc = DocumentResult(
@@ -53,6 +63,13 @@ def fetch_document(
         url=getattr(candidate, "url", "") or "",
         title=getattr(candidate, "title", "") or "",
     )
+    # Как документ был найден: источник кандидата; догадки по типовым путям
+    # помечаем как "guess", чтобы в отчёте отличать их от реальных ссылок сайта.
+    try:
+        src = getattr(candidate, "source", "") or ""
+        doc.discovered_by = "guess" if src == "priority_path" else src
+    except Exception:
+        pass
     try:
         url = doc.url
         if not url:
@@ -76,7 +93,11 @@ def fetch_document(
         if reused is not None and getattr(reused, "html", ""):
             _fill_from_raw(doc, reused)
         else:
-            _fetch_and_parse(doc, url, settings)
+            # URL не был загружен при обходе — пробуем отрендерить с JS
+            # (если доступен Playwright-fetcher), иначе обычный HTTP GET.
+            rendered = _try_render_document(doc, url, fetcher)
+            if not rendered:
+                _fetch_and_parse(doc, url, settings)
 
         # --- Общие поля на основе извлечённого текста ---
         _finalize_common(doc)
@@ -91,6 +112,92 @@ def fetch_document(
 
 
 # ---------------------------------------------------------------------------
+# Подтверждение существования документа по URL
+# ---------------------------------------------------------------------------
+def _confirm_link(doc: DocumentResult, status_code, ok, final_url: str) -> None:
+    """Пометить doc.link_confirmed = True, если URL реально открылся.
+
+    Критерий: ответ ok, итоговый статус 2xx (после редиректов) и итоговый URL
+    остался на том же зарегистрированном домене, что и URL документа.
+    «Существует» и «текст извлечён» — разные вещи; link_confirmed НЕ зависит от
+    извлечения текста. Никогда не бросает.
+    """
+    try:
+        if not ok:
+            return
+        try:
+            code = int(status_code or 0)
+        except Exception:
+            code = 0
+        if not (200 <= code < 300):
+            return
+        fu = final_url or ""
+        if fu and doc.url and not utils.same_registered_domain(fu, doc.url):
+            # Редирект увёл на чужой домен — это не документ нашего сайта.
+            return
+        # Мягкий 404: неизвестный путь редиректит на главную. Если итоговый URL
+        # «схлопнулся» до корня сайта, а у документа был непустой путь — это НЕ
+        # подтверждение существования документа.
+        try:
+            from urllib.parse import urlparse
+
+            fp = urlparse(fu)
+            dp = urlparse(doc.url)
+            final_path = (fp.path or "").strip("/")
+            doc_path = (dp.path or "").strip("/")
+            if doc_path and not final_path:
+                return
+        except Exception:
+            pass
+        doc.link_confirmed = True
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Рендер документа через Playwright-fetcher (SPA-политики требуют JS)
+# ---------------------------------------------------------------------------
+def _try_render_document(doc: DocumentResult, url: str, fetcher: Optional[Any]) -> bool:
+    """Best-effort рендер HTML-документа через fetcher с JS (Playwright).
+
+    Возвращает True, если страница отрендерилась (получен html) и doc заполнен;
+    False — если рендер невозможен/не удался (вызывающий откатится к http_get).
+    Бинарные форматы (.pdf/.docx/.doc) не рендерим. Никогда не бросает.
+    """
+    try:
+        if fetcher is None:
+            return False
+        if getattr(fetcher, "method", "") != "playwright":
+            return False
+        try:
+            ext = utils.url_extension(url)
+        except Exception:
+            ext = ""
+        if ext in ("pdf", "docx", "doc"):
+            return False
+        raw = fetcher.fetch(url)
+        if raw is None or not getattr(raw, "html", ""):
+            return False
+        # Провал навигации (PDF-скачивание -> ERR_ABORTED, сетевые/TLS-ошибки,
+        # about:blank) даёт «html», но бесполезный. Если рендер не дал ни текста,
+        # ни подтверждённой ссылки — откатываемся к http_get (важно для pdf/docx
+        # и для не-html ответов, которые браузер не показывает как документ).
+        final_url = getattr(raw, "final_url", "") or ""
+        goto_failed = any(
+            str(e).startswith("goto:") for e in (getattr(raw, "errors", None) or [])
+        )
+        if final_url.startswith("about:blank") or goto_failed:
+            return False
+        _fill_from_raw(doc, raw)
+        if doc.text_length == 0 and not doc.link_confirmed:
+            # Рендер ничего полезного не дал — пусть http_get попробует байты.
+            return False
+        return True
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Переиспользование уже загруженной страницы
 # ---------------------------------------------------------------------------
 def _fill_from_raw(doc: DocumentResult, raw: RawPage) -> None:
@@ -98,6 +205,12 @@ def _fill_from_raw(doc: DocumentResult, raw: RawPage) -> None:
     doc.status_code = getattr(raw, "status_code", 0) or 0
     if not doc.title:
         doc.title = getattr(raw, "title", "") or ""
+    _confirm_link(
+        doc,
+        getattr(raw, "status_code", 0),
+        getattr(raw, "ok", False),
+        getattr(raw, "final_url", "") or "",
+    )
     html = getattr(raw, "html", "") or ""
     try:
         text = document_parser.html_to_text(html)
@@ -130,6 +243,12 @@ def _fetch_and_parse(doc: DocumentResult, url: str, settings) -> None:
 
     resp = utils.http_get(url, user_agent, timeout_s, max_bytes)
     doc.status_code = getattr(resp, "status_code", 0) or 0
+    _confirm_link(
+        doc,
+        getattr(resp, "status_code", 0),
+        getattr(resp, "ok", False),
+        getattr(resp, "final_url", "") or "",
+    )
 
     fmt = document_parser.detect_format(
         getattr(resp, "final_url", "") or url,

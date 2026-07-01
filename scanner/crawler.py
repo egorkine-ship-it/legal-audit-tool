@@ -324,15 +324,28 @@ def discover_urls(
         try:
             if base and not utils.same_registered_domain(abs_url, base):
                 continue
-            if not utils.is_probably_html_url(abs_url):
-                continue
         except Exception:
             continue
+        # Ключевое слово в ТЕКСТЕ ссылки — самый надёжный сигнал документа:
+        # такую ссылку не отбрасываем по расширению (политика может лежать
+        # в .pdf или на нетипичном маршруте).
+        try:
+            text_kw = bool(text) and utils.contains_any(text, LINK_KEYWORDS)
+        except Exception:
+            text_kw = False
+        if not text_kw:
+            # Фильтр «не-HTML» применяем только к ссылкам без текстового
+            # ключевого слова.
+            try:
+                if not utils.is_probably_html_url(abs_url):
+                    continue
+            except Exception:
+                continue
         blob = abs_url + " " + (text or "")
         try:
-            has_kw = utils.contains_any(blob, LINK_KEYWORDS)
+            has_kw = text_kw or utils.contains_any(blob, LINK_KEYWORDS)
         except Exception:
-            has_kw = False
+            has_kw = text_kw
         (doc_links if has_kw else other_links).append(abs_url)
 
     # (1) Реальные «документные» ссылки — в первую очередь.

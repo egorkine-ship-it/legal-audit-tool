@@ -251,7 +251,12 @@ def run_scan(
 
         documents: List[DocumentResult] = []
         for cand in candidates:
+            if _stopped():
+                break
             try:
+                doc = document_fetcher.fetch_document(cand, raw_by_url, settings, fetcher=fetcher)
+            except TypeError:
+                # Совместимость со старой сигнатурой (без fetcher).
                 doc = document_fetcher.fetch_document(cand, raw_by_url, settings)
             except Exception as exc:
                 doc = DocumentResult(
@@ -264,6 +269,83 @@ def run_scan(
             documents.append(doc)
         documents = _dedupe_documents(documents)
         result.documents = documents
+
+        # --- Агентная перепроверка (LLM-агент обходит сайт через браузер) ---
+        # Третий пояс защиты: агент смотрит подвал/разделы сайта и сообщает,
+        # какие документы мы могли пропустить. ВСЁ, что он назовёт, заземляется:
+        # реально скачивается и проходит тот же конвейер (галлюцинации отсеются).
+        if (
+            scan_input.use_llm
+            and getattr(scan_input, "use_agent", False)
+            and settings.enable_llm
+            and not _stopped()
+        ):
+            _emit(progress_cb, "Агентная перепроверка: LLM-агент обходит сайт…")
+            audit: Dict = {}
+            try:
+                from llm import site_agent
+
+                audit = site_agent.audit_site(
+                    base_url, raw_home, documents, fetcher, settings
+                ) or {}
+            except Exception as exc:
+                result.errors.append(f"site_agent: {exc}")
+            if audit.get("used"):
+                result.agent_audit_used = True
+                result.agent_audit_notes = str(audit.get("notes", "") or "")[:2000]
+                known = {
+                    utils.strip_fragment(d.url).rstrip("/") for d in documents if d.url
+                }
+                grounded_new: List[DocumentResult] = []
+                for mc in (audit.get("missed_candidates") or [])[:10]:
+                    try:
+                        m_url = str(mc.get("url", "") or "").strip()
+                    except Exception:
+                        continue
+                    if not m_url:
+                        continue
+                    key = utils.strip_fragment(m_url).rstrip("/")
+                    if key in known:
+                        continue
+                    known.add(key)
+                    from scanner.models import DocCandidate
+
+                    cand = DocCandidate(
+                        url=m_url,
+                        doc_type=str(mc.get("doc_type", "other") or "other"),
+                        anchor_text=str(mc.get("reason", "") or "")[:200],
+                        source="agent",
+                    )
+                    try:
+                        doc = document_fetcher.fetch_document(
+                            cand, raw_by_url, settings, fetcher=fetcher
+                        )
+                    except TypeError:
+                        doc = document_fetcher.fetch_document(cand, raw_by_url, settings)
+                    except Exception as exc:
+                        result.errors.append(f"agent_candidate {m_url}: {exc}")
+                        continue
+                    # Заземление против галлюцинаций: подсказку агента принимаем
+                    # ТОЛЬКО если открытая страница по содержимому читается как
+                    # документ заявленного типа (document_is_present для источника
+                    # "agent" требует совпадения текста с типом). catch-all-200 и
+                    # выдуманные URL так отсекаются.
+                    doc.discovered_by = "agent"
+                    try:
+                        from scanner import document_finder as _df
+
+                        keep = _df.document_is_present(doc)
+                    except Exception:
+                        keep = bool(doc.is_accessible)
+                    if keep:
+                        grounded_new.append(doc)
+                if grounded_new:
+                    documents = _dedupe_documents(documents + grounded_new)
+                    result.documents = documents
+                    _emit(
+                        progress_cb,
+                        f"Агент нашёл дополнительных документов: {len(grounded_new)}",
+                    )
 
         # --- Технический блок ---
         _emit(progress_cb, "Техническая проверка (HTTPS, IP, mixed content)…")
@@ -325,6 +407,14 @@ def run_scan(
         except Exception as exc:
             result.errors.append(f"risk_scoring: {exc}")
 
+        # --- Ядро-чеклист: ~20 надёжно проверяемых пунктов ---
+        try:
+            from legal import core_checks
+
+            result.core_checklist = core_checks.compute_core_checks(context, result)
+        except Exception as exc:
+            result.errors.append(f"core_checks: {exc}")
+
         result.requires_manual_review = True  # авто-проверка всегда требует юриста
 
         # --- 10-12. Тексты (резюме, КП, письмо) + PDF ---
@@ -376,7 +466,21 @@ def _build_context(
     file_upload = any(f.has_file_upload for f in forms)
 
     docs = result.documents
-    has = lambda dt: any(d.doc_type == dt and d.is_accessible for d in docs)
+    # «Документ есть» — единый критерий document_finder.document_is_present:
+    # реальная ссылка сайта, открывшаяся (link_confirmed) ИЛИ давшая текст;
+    # догадка/агент — только если текст читается как документ этого типа
+    # (защита от catch-all-200, когда любой путь отдаёт главную с кодом 200).
+    try:
+        from scanner import document_finder as _df
+
+        has = lambda dt: any(
+            d.doc_type == dt and _df.document_is_present(d) for d in docs
+        )
+    except Exception:
+        has = lambda dt: any(
+            d.doc_type == dt and (d.is_accessible or getattr(d, "link_confirmed", False))
+            for d in docs
+        )
 
     return ScanContext(
         company_name=scan_input.company_name,
@@ -451,11 +555,19 @@ def _dedupe_documents(documents: List[DocumentResult]) -> List[DocumentResult]:
     accessible_ids = {id(d) for d in accessible}
     accessible_types = {d.doc_type for d in accessible}
 
+    # Из недоступных оставляем не более одного на тип; предпочитаем документы с
+    # подтверждённой ссылкой (link_confirmed) — это сигнал «есть SPA-документ»,
+    # который иначе мог бы быть вытеснен обычной недоступной догадкой-404.
+    def _rank(d: DocumentResult) -> tuple:
+        return (bool(getattr(d, "link_confirmed", False)), int(d.status_code or 0) == 200)
+
     kept_inacc: Dict[str, DocumentResult] = {}
     for d in docs:
         if id(d) in accessible_ids or d.doc_type in accessible_types:
             continue
-        kept_inacc.setdefault(d.doc_type, d)
+        prev = kept_inacc.get(d.doc_type)
+        if prev is None or _rank(d) > _rank(prev):
+            kept_inacc[d.doc_type] = d
 
     return accessible + list(kept_inacc.values())
 

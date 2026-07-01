@@ -75,6 +75,59 @@ DOC_TYPE_KEYWORDS: List[Tuple[str, List[str]]] = [
 ]
 
 
+_DOC_TYPE_KW_MAP = {dt: words for dt, words in DOC_TYPE_KEYWORDS}
+
+
+def text_matches_doc_type(text: str, doc_type: str, title: str = "") -> bool:
+    """
+    True, если извлечённый текст/заголовок читается как документ данного типа
+    (содержит характерные ключевые слова).
+
+    Зачем: сайты с catch-all 200 (SPA, Tilda, Bitrix) отдают главную/оболочку
+    на ЛЮБОЙ путь. Тогда «угаданная» /privacy откроется с кодом 200 и текстом
+    главной — но это НЕ политика. Проверка по содержимому отсекает такие ложные
+    срабатывания. Никогда не бросает.
+    """
+    try:
+        words = _DOC_TYPE_KW_MAP.get(doc_type or "")
+        if not words:
+            return False
+        blob = ((title or "") + " " + (text or "")[:4000])
+        return utils.contains_any(blob, words)
+    except Exception:
+        return False
+
+
+def document_is_present(doc) -> bool:
+    """
+    Считать ли документ РЕАЛЬНО присутствующим (для подавления рисков
+    «документ отсутствует»). Единый критерий для всего проекта.
+
+    Логика:
+      * найден по РЕАЛЬНОЙ ссылке сайта (подвал/меню/sitemap: anchor/page_link/
+        sitemap) и открылся (link_confirmed) или дал текст (is_accessible) —
+        считаем присутствующим даже без извлечённого текста (SPA-политика: сайт
+        сам ссылается на неё этим текстом);
+      * найден ДОГАДКОЙ по типовому пути или ПОДСКАЗКОЙ агента — доверяем ТОЛЬКО
+        если извлечённый текст читается как документ этого типа (иначе это
+        catch-all-200 или галлюцинация агента).
+    Никогда не бросает.
+    """
+    try:
+        src = getattr(doc, "discovered_by", "") or ""
+        dt = getattr(doc, "doc_type", "") or ""
+        if src in ("anchor", "page_link", "sitemap", "header", "footer"):
+            return bool(getattr(doc, "is_accessible", False) or getattr(doc, "link_confirmed", False))
+        # guess / agent / прочее — требуем содержательного подтверждения типа.
+        if getattr(doc, "is_accessible", False) and text_matches_doc_type(
+            getattr(doc, "text", "") or "", dt, getattr(doc, "title", "") or ""
+        ):
+            return True
+        return False
+    except Exception:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Типовые пути -> тип документа (создаются как кандидаты source="priority_path")
 # ---------------------------------------------------------------------------
@@ -241,11 +294,16 @@ def find_document_candidates(
 
     Источники:
       1. Якоря из HTML каждой raw_page, чей текст/href/title похож на документ.
+      1b. Ссылки из pages[].links (уже абсолютизированные URL без текста якоря) —
+          классифицируем только по URL (source="page_link"). Это страховка для
+          JS-сайтов, где html может быть пустым/усечённым, но fetcher уже собрал
+          ссылки со страницы.
       2. Типовые пути DOC_PRIORITY_PATHS (source="priority_path").
       3. URL из sitemap, содержащие ключевые слова (source="sitemap").
 
     Дедупликация по url без фрагмента; при конфликте сохраняем наиболее
-    специфичный (не "other") тип. Cap ~40. Никогда не бросает.
+    специфичный (не "other") тип; кандидат с текстом якоря (anchor) сильнее
+    page_link. Cap ~40. Никогда не бросает.
     """
     candidates: List[DocCandidate] = []
     try:
@@ -282,6 +340,41 @@ def find_document_candidates(
                         anchor_text=utils.truncate(text, 200),
                         title=utils.truncate(title, 200),
                         source="anchor",
+                        page_url=page_url,
+                    )
+                )
+            except Exception:
+                continue
+
+    # --- 1b. Ссылки страниц (PageResult.links: абсолютные URL без текста) ---
+    try:
+        page_list = list(pages or [])
+    except Exception:
+        page_list = []
+    for page in page_list:
+        try:
+            page_url = getattr(page, "final_url", "") or getattr(page, "url", "") or ""
+            links = list(getattr(page, "links", []) or [])
+        except Exception:
+            continue
+        for link in links:
+            try:
+                if not link or not isinstance(link, str):
+                    continue
+                # Только тот же зарегистрированный домен.
+                if not utils.same_registered_domain(link, base_url):
+                    continue
+                # Текста якоря нет — классифицируем только по URL.
+                if not _looks_like_document_link("", link, ""):
+                    continue
+                doc_type = classify_doc_type("", link, "")
+                candidates.append(
+                    DocCandidate(
+                        url=link,
+                        doc_type=doc_type,
+                        anchor_text="",
+                        title="",
+                        source="page_link",
                         page_url=page_url,
                     )
                 )
@@ -335,8 +428,11 @@ def find_document_candidates(
 
 
 # Приоритет источника при равенстве типа (более «сильный» источник побеждает).
+# anchor выше page_link: у якоря есть текст ссылки, он информативнее для
+# классификации и отчёта.
 _SOURCE_RANK = {
-    "anchor": 3,
+    "anchor": 4,
+    "page_link": 3,
     "priority_path": 2,
     "sitemap": 1,
     "": 0,

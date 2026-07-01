@@ -208,6 +208,21 @@ def _recommendations(result: ScanResult) -> Dict[str, List[Any]]:
     return {"urgent": urgent, "soon": soon, "optional": optional}
 
 
+def _core_status_ru() -> Dict[str, str]:
+    """RU-подписи статусов ядро-чеклиста (мягкий импорт — не роняем рендер)."""
+    try:
+        from scanner.models import CORE_CHECK_STATUS_RU
+
+        return dict(CORE_CHECK_STATUS_RU)
+    except Exception:
+        return {
+            "ok": "выполнено",
+            "risk": "зона риска",
+            "unclear": "требует проверки",
+            "not_applicable": "не применимо",
+        }
+
+
 def _build_context(result: ScanResult, settings: Any, packages: Optional[dict]) -> Dict[str, Any]:
     risk_level = getattr(result, "risk_level", RiskLevel.unknown.value) or RiskLevel.unknown.value
     try:
@@ -232,6 +247,7 @@ def _build_context(result: ScanResult, settings: Any, packages: Optional[dict]) 
         "risk_level_ru_map": risk_level_ru_map,
         "DOC_TYPE_RU": DOC_TYPE_RU,
         "checklist_status_ru": CHECKLIST_STATUS_RU,
+        "core_status_ru": _core_status_ru(),
         "country_hint_ru": COUNTRY_HINT_RU,
         "disclaimer": DISCLAIMER_FULL,
         "disclaimer_short": DISCLAIMER_SHORT,

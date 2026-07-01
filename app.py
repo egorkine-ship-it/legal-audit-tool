@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import io
 import json
+import time
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -33,6 +34,7 @@ from scanner.models import (
     ScanStatus,
 )
 from scanner.orchestrator import run_scan
+from services.jobs import JobManager
 
 st.set_page_config(
     page_title="Экспресс-аудит сайтов · 152-ФЗ",
@@ -46,6 +48,14 @@ RISK_EMOJI = {
     RiskLevel.medium.value: "🟡",
     RiskLevel.high.value: "🟠",
     RiskLevel.critical.value: "🔴",
+}
+
+# Эмодзи статусов пунктов ядро-чеклиста.
+CORE_STATUS_EMOJI = {
+    "ok": "✅",
+    "risk": "🔴",
+    "unclear": "🟡",
+    "not_applicable": "⚪",
 }
 
 
@@ -123,6 +133,43 @@ def _pdf_bytes(path: str) -> Optional[bytes]:
 # ---------------------------------------------------------------------------
 # Отрисовка результата
 # ---------------------------------------------------------------------------
+def _render_core_checklist(result: ScanResult) -> None:
+    """Ядро-чеклист (основные проверки) и заметки агентной перепроверки."""
+    items = getattr(result, "core_checklist", None) or []
+    if items:
+        st.subheader("✅ Ядро-чеклист (основные проверки)")
+        counts = {"ok": 0, "risk": 0, "unclear": 0, "not_applicable": 0}
+        for item in items:
+            status = getattr(item, "status", "unclear") or "unclear"
+            counts[status] = counts.get(status, 0) + 1
+            line = f"{CORE_STATUS_EMOJI.get(status, '⚪')} **{item.label}**"
+            if item.comment:
+                line += f" — {item.comment}"
+            st.markdown(line)
+        st.caption(
+            f"Выполнено: {counts.get('ok', 0)} · Зоны риска: {counts.get('risk', 0)} · "
+            f"Требует проверки: {counts.get('unclear', 0)} · "
+            f"Не применимо: {counts.get('not_applicable', 0)}"
+        )
+
+    notes = (getattr(result, "agent_audit_notes", "") or "").strip()
+    if notes:
+        st.caption("Агентная перепроверка")
+        st.write(notes)
+
+
+def _render_fetch_diagnostics(result: ScanResult) -> None:
+    """Диагностика рендера главной: браузер (Playwright) или простой HTTP."""
+    if (result.fetch_method or "http") != "playwright":
+        st.warning(
+            f"⚠️ Страницы загружены без браузера (метод: {result.fetch_method or 'http'}). "
+            f"На JS-сайтах подвал и документы могут не находиться. "
+            f"Ссылок на главной: {result.homepage_links}."
+        )
+    else:
+        st.caption(f"Рендер: браузер (Playwright) · ссылок на главной: {result.homepage_links}")
+
+
 def render_result_summary(result: ScanResult) -> None:
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Risk score", result.risk_score)
@@ -155,6 +202,8 @@ def render_result_summary(result: ScanResult) -> None:
                 st.write(r.report_phrase)
             if r.recommendation:
                 st.caption(f"Рекомендация: {r.recommendation}")
+
+    _render_core_checklist(result)
 
     colf, cold, colt = st.columns(3)
     with colf:
@@ -267,8 +316,70 @@ def _run_scan_ui(scan_input, settings, on_progress=None) -> ScanResult:
         return fut.result()
 
 
+def _render_job_result(job, settings: Settings) -> None:
+    """Загрузить сохранённый результат задачи из БД и отрисовать его."""
+    result = repositories.get_scan(job.scan_id, settings) if job.scan_id else None
+    if result is None:
+        st.error("Не удалось загрузить результат из базы данных.")
+        return
+    st.session_state["last_result"] = result.scan_id
+    _render_fetch_diagnostics(result)
+    render_result_summary(result)
+    render_texts_and_downloads(result)
+
+
+def _render_jobs_block(settings: Settings) -> None:
+    """
+    «Активные и последние проверки»: фоновые задачи из JobManager.
+
+    Задачи живут в процессе (не в Streamlit-сессии), поэтому после перезагрузки
+    страницы пользователь автоматически «переподключается» к идущей проверке.
+    """
+    manager = JobManager.instance()
+    jobs = manager.list_jobs()
+    if not jobs:
+        return
+
+    st.subheader("Активные и последние проверки")
+    for job in jobs:
+        label = job.company_name or job.site_url or job.job_id
+        with st.container(border=True):
+            if job.status == "running":
+                st.markdown(f"⏳ **{label}** — `{job.site_url}` · выполняется (с {job.created_at})")
+                for line in job.progress[-3:]:
+                    st.caption(line)
+                if st.button("⏹ Остановить", key=f"stop_{job.job_id}"):
+                    manager.stop(job.job_id)
+                    st.rerun()
+            elif job.status == "done":
+                st.markdown(f"✅ **{label}** — `{job.site_url}` · завершена ({job.finished_at})")
+                if job.scan_id:
+                    if st.button("Показать результат", key=f"show_{job.job_id}"):
+                        st.session_state["show_job_result"] = job.job_id
+                    if st.session_state.get("show_job_result") == job.job_id:
+                        _render_job_result(job, settings)
+                else:
+                    st.caption("Результат не сохранён в базе (см. историю).")
+            elif job.status == "stopped":
+                st.markdown(f"⏹ **{label}** — `{job.site_url}` · остановлена ({job.finished_at})")
+                if job.scan_id:
+                    if st.button("Показать частичный результат", key=f"show_{job.job_id}"):
+                        st.session_state["show_job_result"] = job.job_id
+                    if st.session_state.get("show_job_result") == job.job_id:
+                        _render_job_result(job, settings)
+            else:  # error
+                st.markdown(f"❌ **{label}** — `{job.site_url}` · ошибка ({job.finished_at})")
+                if job.error:
+                    st.caption(job.error)
+
+
 def tab_single(settings: Settings) -> None:
     st.header("Проверка одного сайта")
+
+    # Блок фоновых задач — всегда сверху: сюда «переподключается» пользователь
+    # после перезагрузки страницы или переключения вкладок.
+    _render_jobs_block(settings)
+
     with st.form("single_form"):
         c1, c2 = st.columns(2)
         with c1:
@@ -281,61 +392,43 @@ def tab_single(settings: Settings) -> None:
             max_pages = st.number_input(
                 "Лимит страниц", min_value=1, max_value=200, value=int(settings.max_pages)
             )
-        cc1, cc2 = st.columns(2)
+        cc1, cc2, cc3 = st.columns(3)
         use_llm = cc1.checkbox(
             "Использовать LLM для анализа документов",
             value=bool(settings.enable_llm and settings.llm_api_key),
         )
-        create_pdf = cc2.checkbox("Создать PDF", value=True)
+        use_agent = cc2.checkbox(
+            "Агентная перепроверка (LLM-агент обходит сайт)",
+            value=True,
+        )
+        create_pdf = cc3.checkbox("Создать PDF", value=True)
         submitted = st.form_submit_button("🚀 Запустить проверку", use_container_width=True)
 
     if submitted:
         if not url.strip():
             st.error("Укажите URL сайта.")
-            return
-        scan_input = ScanInput(
-            company_name=company.strip(),
-            site_url=url.strip(),
-            industry=industry,
-            email=email.strip(),
-            comment=comment.strip(),
-            max_pages=int(max_pages),
-            use_llm=bool(use_llm),
-            create_pdf=bool(create_pdf),
-        )
-        status = st.status("Запуск проверки…", expanded=True)
-
-        def cb(msg: str) -> None:
-            status.update(label=msg)
-            status.write(msg)
-
-        try:
-            result = _run_scan_ui(scan_input, settings, on_progress=cb)
-            status.update(label="Проверка завершена", state="complete")
-        except Exception as exc:  # предохранитель
-            status.update(label="Ошибка проверки", state="error")
-            st.error(f"Ошибка: {exc}")
-            return
-
-        # Диагностика рендера: если не Playwright — предупреждаем, что JS-сайты
-        # (и их подвал с документами) могут не прогружаться.
-        if (result.fetch_method or "http") != "playwright":
-            st.warning(
-                f"⚠️ Страницы загружены без браузера (метод: {result.fetch_method or 'http'}). "
-                f"На JS-сайтах подвал и документы могут не находиться. "
-                f"Ссылок на главной: {result.homepage_links}."
-            )
         else:
-            st.caption(f"Рендер: браузер (Playwright) · ссылок на главной: {result.homepage_links}")
+            scan_input = ScanInput(
+                company_name=company.strip(),
+                site_url=url.strip(),
+                industry=industry,
+                email=email.strip(),
+                comment=comment.strip(),
+                max_pages=int(max_pages),
+                use_llm=bool(use_llm),
+                use_agent=bool(use_agent),
+                create_pdf=bool(create_pdf),
+            )
+            job_id = JobManager.instance().submit(scan_input, settings)
+            st.session_state["last_job_id"] = job_id
+            st.session_state.pop("show_job_result", None)
+            st.rerun()
 
-        try:
-            repositories.save_scan(result, settings)
-        except Exception as exc:
-            st.warning(f"Не удалось сохранить результат в базу: {exc}")
-
-        st.session_state["last_result"] = result.scan_id
-        render_result_summary(result)
-        render_texts_and_downloads(result)
+    # Автообновление, пока есть выполняющиеся задачи (не крутится вхолостую:
+    # без running-задач rerun не планируется).
+    if JobManager.instance().any_running():
+        time.sleep(2)
+        st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -401,6 +494,10 @@ def tab_bulk(settings: Settings) -> None:
             comment="" if str(row.get("comment") or "").lower() == "nan" else str(row.get("comment") or "").strip(),
             max_pages=int(b_max),
             use_llm=bool(b_llm),
+            # В массовой проверке агентный обход по умолчанию ВЫКЛЮЧЕН: он
+            # медленный и дорогой на каждый сайт. Для глубокой проверки —
+            # одиночный режим.
+            use_agent=False,
             create_pdf=bool(b_pdf),
         )
         log_box.info(f"[{i}/{len(rows)}] Проверка: {site}")
@@ -899,6 +996,13 @@ def _login_screen(settings: Settings) -> None:
         if auth.check_credentials(email, password, settings):
             st.session_state["authenticated"] = True
             st.session_state["auth_email"] = email.strip()
+            # Токен в query-параметре переживает перезагрузку страницы.
+            token = auth.issue_session_token(email.strip(), settings)
+            if token:
+                try:
+                    st.query_params["auth"] = token
+                except Exception:
+                    pass
             st.rerun()
         else:
             st.error("Неверный email или пароль.")
@@ -907,6 +1011,40 @@ def _login_screen(settings: Settings) -> None:
 
 def _is_authenticated() -> bool:
     return bool(st.session_state.get("authenticated"))
+
+
+def _restore_session_from_token(settings: Settings) -> None:
+    """Восстановить вход по токену из URL (после перезагрузки страницы)."""
+    if st.session_state.get("authenticated"):
+        return
+    try:
+        token = st.query_params.get("auth", "")
+    except Exception:
+        token = ""
+    if not token:
+        return
+    email = auth.verify_session_token(token, settings)
+    if email:
+        st.session_state["authenticated"] = True
+        st.session_state["auth_email"] = email
+    else:
+        # Просроченный/битый токен — убираем из URL.
+        try:
+            if "auth" in st.query_params:
+                del st.query_params["auth"]
+        except Exception:
+            pass
+
+
+def _logout() -> None:
+    """Выход: чистим сессию и токен в URL."""
+    st.session_state["authenticated"] = False
+    st.session_state.pop("auth_email", None)
+    try:
+        if "auth" in st.query_params:
+            del st.query_params["auth"]
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -937,6 +1075,9 @@ def main() -> None:
     settings = get_settings()
     ensure_db(settings)
 
+    # Восстановление входа по токену из URL (переживает перезагрузку страницы).
+    _restore_session_from_token(settings)
+
     if not _is_authenticated():
         _login_screen(settings)
         return
@@ -945,10 +1086,15 @@ def main() -> None:
     st.sidebar.markdown(f"### 🛡️ {settings.firm_name or 'Экспресс-аудит'}")
     st.sidebar.caption(f"Вы вошли как: {st.session_state.get('auth_email', settings.admin_email)}")
     if st.sidebar.button("Выйти"):
-        st.session_state["authenticated"] = False
-        st.session_state.pop("auth_email", None)
+        _logout()
         st.rerun()
 
+    if not auth.secret_is_secure(settings):
+        st.sidebar.warning(
+            "⚠️ SESSION_SECRET не задан — «запомнить вход» отключено (после "
+            "перезагрузки нужно логиниться заново). Задайте переменную окружения "
+            "SESSION_SECRET (длинную случайную строку) на хостинге."
+        )
     if not (settings.enable_llm and settings.llm_api_key):
         st.sidebar.warning("LLM не настроена — только эвристический анализ.")
 

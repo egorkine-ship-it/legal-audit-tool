@@ -92,6 +92,29 @@
     </section>
 
     {# ============================================================ #}
+    {# 2а. Ядро-чеклист: основные проверки                          #}
+    {# ============================================================ #}
+    {% if result.core_checklist %}
+    <section class="section">
+        <h2>2а. Основные проверки (ядро-чеклист)</h2>
+        <p class="section-lead">Фиксированный набор ключевых проверяемых пунктов. Статус «зона риска» означает признак возможного несоответствия и требует подтверждения юристом.</p>
+        <table class="data">
+            <tr><th>Пункт</th><th>Статус</th><th>Комментарий</th></tr>
+            {% for it in result.core_checklist %}
+            <tr>
+                <td>{{ it.label }}</td>
+                <td class="status-{{ it.status }}">{{ core_status_ru.get(it.status, it.status) }}</td>
+                <td>{{ it.comment }}{% if it.evidence %}<div class="quote">{{ it.evidence }}</div>{% endif %}</td>
+            </tr>
+            {% endfor %}
+        </table>
+        {% if result.agent_audit_used and result.agent_audit_notes %}
+        <p class="muted">Агентная перепроверка (LLM-обход сайта): {{ result.agent_audit_notes }}</p>
+        {% endif %}
+    </section>
+    {% endif %}
+
+    {# ============================================================ #}
     {# 4. Выявленные признаки риска                                 #}
     {# ============================================================ #}
     <section class="section">

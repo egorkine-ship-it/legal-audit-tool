@@ -94,14 +94,25 @@ _STATUS_RANK = {
 
 
 def _docs(ctx: ScanContext, doc_type: str) -> List[DocumentResult]:
-    """Все доступные документы указанного типа."""
+    """
+    Документы указанного типа, которые РЕАЛЬНО присутствуют (единый критерий
+    document_finder.document_is_present — защита от catch-all-200 и галлюцинаций
+    агента). Раньше учитывалось простое наличие любого DocumentResult этого типа,
+    из-за чего 404-догадка «подавляла» риск отсутствия документа.
+    """
     out: List[DocumentResult] = []
     try:
+        from scanner import document_finder as _df
+
         for d in ctx.documents:
-            if getattr(d, "doc_type", "") == doc_type:
+            if getattr(d, "doc_type", "") == doc_type and _df.document_is_present(d):
                 out.append(d)
     except Exception:
-        return []
+        try:
+            return [d for d in ctx.documents if getattr(d, "doc_type", "") == doc_type
+                    and (getattr(d, "is_accessible", False) or getattr(d, "link_confirmed", False))]
+        except Exception:
+            return []
     return out
 
 
@@ -179,6 +190,19 @@ def _any_form(ctx: ScanContext, cond: Callable[[FormResult], bool]) -> Optional[
 
 def _has_privacy_policy(ctx: ScanContext) -> bool:
     return bool(getattr(ctx, "has_privacy_policy", False)) or bool(_docs(ctx, "privacy_policy"))
+
+
+def _readable_docs(ctx: ScanContext, doc_type: str) -> List[DocumentResult]:
+    """Документы типа с реально извлечённым текстом (можно оценивать содержимое)."""
+    try:
+        return [
+            d for d in ctx.documents
+            if getattr(d, "doc_type", "") == doc_type
+            and getattr(d, "is_accessible", False)
+            and int(getattr(d, "text_length", 0) or 0) > 0
+        ]
+    except Exception:
+        return []
 
 
 def _tracking_trackers(ctx: ScanContext) -> List:
@@ -317,7 +341,7 @@ def _r006(ctx: ScanContext) -> Optional[Evidence]:
 
 def _r007(ctx: ScanContext) -> Optional[Evidence]:
     """Политика есть, но оператор не идентифицирован (PP_003/PP_005/PP_006)."""
-    if not _has_privacy_policy(ctx):
+    if not _readable_docs(ctx, "privacy_policy"):
         return None
     missing = [i for i in ("PP_003", "PP_005", "PP_006") if not _item_found(ctx, i)]
     if missing:
@@ -334,7 +358,7 @@ def _r007(ctx: ScanContext) -> Optional[Evidence]:
 
 def _r008(ctx: ScanContext) -> Optional[Evidence]:
     """Политика есть, но нет целей или перечня ПДн/категорий (PP_009/PP_010/PP_011)."""
-    if not _has_privacy_policy(ctx):
+    if not _readable_docs(ctx, "privacy_policy"):
         return None
     missing = [i for i in ("PP_009", "PP_010", "PP_011") if not _item_found(ctx, i)]
     if missing:
@@ -351,7 +375,7 @@ def _r008(ctx: ScanContext) -> Optional[Evidence]:
 
 def _r009(ctx: ScanContext) -> Optional[Evidence]:
     """Политика не соответствует полям форм (PP_012 not_found/unclear)."""
-    if not _has_privacy_policy(ctx):
+    if not _readable_docs(ctx, "privacy_policy"):
         return None
     status = _item_status(ctx, "PP_012")
     if status in ("not_found", "unclear"):

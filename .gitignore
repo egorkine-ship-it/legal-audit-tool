@@ -24,3 +24,7 @@ exports/pdf/*
 
 # Прочее из этой рабочей папки, не относящееся к проекту
 nexora_video/
+
+# SQLite в exports (EXPORTS_DIR по умолчанию)
+exports/*.sqlite
+exports/database.sqlite
