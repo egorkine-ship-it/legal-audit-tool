@@ -109,6 +109,12 @@ def run_scan(
     try:
         base_url, raw_home = crawler.resolve_start_url(scan_input.site_url, fetcher, settings)
         result.final_url = raw_home.final_url or base_url
+        # Диагностика: как рендерилась главная и сколько ссылок нашли.
+        result.fetch_method = getattr(raw_home, "fetch_method", "") or getattr(fetcher, "method", "")
+        try:
+            result.homepage_links = len(raw_home.links or [])
+        except Exception:
+            result.homepage_links = 0
         if raw_home.errors:
             result.errors.extend(raw_home.errors)
         if not raw_home.ok and not raw_home.html:

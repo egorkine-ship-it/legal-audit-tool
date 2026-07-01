@@ -419,6 +419,8 @@ class ScanResult(BaseModel):
     comment: str = ""
 
     pages_checked: int = 0
+    fetch_method: str = ""  # playwright / http — как рендерилась главная
+    homepage_links: int = 0  # сколько ссылок найдено на главной (диагностика)
     pages: List[PageResult] = Field(default_factory=list)
     forms: List[FormResult] = Field(default_factory=list)
     documents: List[DocumentResult] = Field(default_factory=list)

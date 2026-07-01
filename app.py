@@ -222,6 +222,51 @@ def render_texts_and_downloads(result: ScanResult) -> None:
 # ---------------------------------------------------------------------------
 # Вкладка 1: Проверка одного сайта
 # ---------------------------------------------------------------------------
+def _run_scan_ui(scan_input, settings, on_progress=None) -> ScanResult:
+    """
+    Запустить проверку в ОТДЕЛЬНОМ потоке.
+
+    Критично для облака: Playwright sync API не запускается внутри потока
+    Streamlit, где активен asyncio event loop, и молча откатывается на простой
+    HTTP-запрос (тогда JS-сайты не рендерятся и подвал/документы не находятся).
+    Свежий воркер-поток без asyncio-цикла устраняет это. Прогресс передаётся в
+    основной поток через очередь (воркер НЕ трогает Streamlit напрямую).
+    """
+    import queue as _queue
+    from concurrent.futures import ThreadPoolExecutor
+
+    q: "_queue.Queue" = _queue.Queue()
+
+    def _worker():
+        return run_scan(scan_input, settings, progress_cb=lambda m: q.put(m))
+
+    with ThreadPoolExecutor(max_workers=1) as ex:
+        fut = ex.submit(_worker)
+        while True:
+            try:
+                msg = q.get(timeout=0.2)
+                if on_progress:
+                    try:
+                        on_progress(msg)
+                    except Exception:
+                        pass
+            except _queue.Empty:
+                if fut.done():
+                    break
+        # Добираем оставшиеся сообщения.
+        while not q.empty():
+            try:
+                m = q.get_nowait()
+            except Exception:
+                break
+            if on_progress:
+                try:
+                    on_progress(m)
+                except Exception:
+                    pass
+        return fut.result()
+
+
 def tab_single(settings: Settings) -> None:
     st.header("Проверка одного сайта")
     with st.form("single_form"):
@@ -265,12 +310,23 @@ def tab_single(settings: Settings) -> None:
             status.write(msg)
 
         try:
-            result = run_scan(scan_input, settings, progress_cb=cb)
+            result = _run_scan_ui(scan_input, settings, on_progress=cb)
             status.update(label="Проверка завершена", state="complete")
         except Exception as exc:  # предохранитель
             status.update(label="Ошибка проверки", state="error")
             st.error(f"Ошибка: {exc}")
             return
+
+        # Диагностика рендера: если не Playwright — предупреждаем, что JS-сайты
+        # (и их подвал с документами) могут не прогружаться.
+        if (result.fetch_method or "http") != "playwright":
+            st.warning(
+                f"⚠️ Страницы загружены без браузера (метод: {result.fetch_method or 'http'}). "
+                f"На JS-сайтах подвал и документы могут не находиться. "
+                f"Ссылок на главной: {result.homepage_links}."
+            )
+        else:
+            st.caption(f"Рендер: браузер (Playwright) · ссылок на главной: {result.homepage_links}")
 
         try:
             repositories.save_scan(result, settings)
@@ -353,7 +409,7 @@ def tab_bulk(settings: Settings) -> None:
             log_box.info(f"[{i}/{len(rows)}] {_s} · {msg}")
 
         try:
-            res = run_scan(scan_input, settings, progress_cb=cb)
+            res = _run_scan_ui(scan_input, settings, on_progress=cb)
         except Exception as exc:
             res = ScanResult(
                 scan_id=f"err{i}", company_name=company, site_url=site,

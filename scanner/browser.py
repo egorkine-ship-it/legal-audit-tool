@@ -137,6 +137,19 @@ class PlaywrightFetcher:
             except Exception:
                 pass
 
+            # Прокрутка вниз — подгружаем ленивый контент и ПОДВАЛ (footer с
+            # ссылками на политику/оферту/согласие часто рендерится только после
+            # скролла). Затем возвращаемся наверх.
+            try:
+                for _y in (0.35, 0.7, 1.0):
+                    page.evaluate(
+                        "y => window.scrollTo(0, document.body.scrollHeight * y)", _y
+                    )
+                    page.wait_for_timeout(350)
+                page.evaluate("window.scrollTo(0, 0)")
+            except Exception:
+                pass
+
             # --- Базовый сбор данных страницы (ДО клика по модалкам) ---
             final_url = url
             try:
