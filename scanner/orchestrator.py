@@ -55,8 +55,20 @@ def run_scan(
     scan_input: ScanInput,
     settings: Settings,
     progress_cb: ProgressCb = None,
+    should_stop: Optional[Callable[[], bool]] = None,
 ) -> ScanResult:
-    """Выполнить полную проверку одного сайта и вернуть ScanResult."""
+    """Выполнить полную проверку одного сайта и вернуть ScanResult.
+
+    should_stop() — необязательный колбэк отмены: если он вернёт True, проверка
+    аккуратно прерывается на ближайшей границе (между страницами), возвращая
+    частичный результат.
+    """
+
+    def _stopped() -> bool:
+        try:
+            return bool(should_stop and should_stop())
+        except Exception:
+            return False
     from scanner import (
         browser,
         cookie_detector,
@@ -105,6 +117,15 @@ def run_scan(
     # --- 1. Нормализация URL + стартовая страница ---
     _emit(progress_cb, "Нормализация URL и загрузка главной страницы…")
     fetcher = browser.create_fetcher(settings)
+    if getattr(fetcher, "method", "") != "playwright":
+        # ГРОМКО фиксируем деградацию: без браузера JS-сайты не рендерятся,
+        # подвал и документы могут не находиться. Это должно быть видно в отчёте.
+        launch_err = getattr(fetcher, "launch_error", "") or ""
+        result.errors.append(
+            "ВНИМАНИЕ: браузер (Playwright) недоступен — страницы загружены без JS. "
+            "На JS-сайтах ссылки из подвала и документы могли не загрузиться."
+            + (f" Причина: {launch_err}" if launch_err else "")
+        )
     raw_pages: List[RawPage] = []
     try:
         base_url, raw_home = crawler.resolve_start_url(scan_input.site_url, fetcher, settings)
@@ -171,6 +192,9 @@ def run_scan(
         import time
 
         for idx, (u, pre) in enumerate(ordered, start=1):
+            if _stopped():
+                result.errors.append("Проверка остановлена пользователем.")
+                break
             _emit(progress_cb, f"Страница {idx}/{len(ordered)}: {u}")
             try:
                 raw = pre if pre is not None else fetcher.fetch(
@@ -260,6 +284,9 @@ def run_scan(
         client = llm_client.get_client(settings) if (settings.enable_llm and scan_input.use_llm) else None
         analyses: List[DocumentAnalysis] = []
         for doc in documents:
+            if _stopped():
+                result.errors.append("Анализ документов остановлен пользователем.")
+                break
             try:
                 analysis = document_analyzer.analyze_document(
                     doc, doc.doc_type, context, settings, checklists, client

@@ -348,6 +348,13 @@ class DocumentResult(BaseModel):
     format: str = "html"  # html / pdf / docx
     status_code: int = 0
     is_accessible: bool = False
+    # Документ подтверждён как СУЩЕСТВУЮЩИЙ (ссылка ведёт на 2xx того же домена),
+    # даже если текст извлечь не удалось. «Существует» и «текст извлечён» —
+    # разные вещи: политика-SPA без текста должна считаться найденной, но
+    # требующей ручной проверки, а не «политика отсутствует».
+    link_confirmed: bool = False
+    # Как документ был найден: anchor / page_link / guess / sitemap / agent.
+    discovered_by: str = ""
     text: str = ""
     text_length: int = 0
     date_detected: str = ""
@@ -405,7 +412,33 @@ class ScanInput(BaseModel):
     comment: str = ""
     max_pages: int = 20
     use_llm: bool = True
+    # Агентная перепроверка: LLM-агент реально ходит по сайту (через браузер)
+    # и проверяет, что мы ничего не пропустили. Работает только при use_llm.
+    use_agent: bool = True
     create_pdf: bool = True
+
+
+# ---------------------------------------------------------------------------
+# Ядро-чеклист: ~20 надёжно автоматизируемых проверок
+# ---------------------------------------------------------------------------
+CORE_CHECK_STATUS_RU = {
+    "ok": "выполнено",
+    "risk": "зона риска",
+    "unclear": "требует проверки",
+    "not_applicable": "не применимо",
+}
+
+
+class CoreCheckItem(BaseModel):
+    """Один пункт ядро-чеклиста (детерминированный вердикт + доказательство)."""
+
+    id: str
+    label: str
+    status: str = "unclear"  # ok | risk | unclear | not_applicable
+    risk_level: str = RiskLevel.medium.value
+    comment: str = ""
+    evidence: str = ""       # цитата/факт, на котором основан вердикт
+    source: str = "auto"     # auto | llm-verified
 
 
 class ScanResult(BaseModel):
@@ -421,6 +454,9 @@ class ScanResult(BaseModel):
     pages_checked: int = 0
     fetch_method: str = ""  # playwright / http — как рендерилась главная
     homepage_links: int = 0  # сколько ссылок найдено на главной (диагностика)
+    core_checklist: List[CoreCheckItem] = Field(default_factory=list)
+    agent_audit_notes: str = ""   # заметки LLM-агента после обхода сайта
+    agent_audit_used: bool = False
     pages: List[PageResult] = Field(default_factory=list)
     forms: List[FormResult] = Field(default_factory=list)
     documents: List[DocumentResult] = Field(default_factory=list)
