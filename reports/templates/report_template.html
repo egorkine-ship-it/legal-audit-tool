@@ -2,109 +2,137 @@
 <html lang="ru">
 <head>
     <meta charset="utf-8">
-    <title>Отчёт о проверке публичной части сайта{% if result.company_name %} — {{ result.company_name }}{% endif %}</title>
+    <title>Экспресс-анализ рисков по 152-ФЗ{% if result.company_name %} — {{ result.company_name }}{% endif %}</title>
     <style>{{ inline_css|safe }}</style>
 </head>
 <body>
 <div class="report">
 
     {# ============================================================ #}
-    {# 1. Обложка + дисклеймер                                       #}
+    {# 1. ОБЛОЖКА / HERO + вердикт риска                            #}
     {# ============================================================ #}
     <section class="cover">
-        {% if logo_data_uri %}
-            <img class="logo" src="{{ logo_data_uri }}" alt="{{ settings.firm_name }}">
-        {% elif settings.firm_name %}
-            <div class="firm-name">{{ settings.firm_name }}</div>
-        {% endif %}
+        <div class="cover-brand">
+            {% if logo_data_uri %}
+                <img class="logo" src="{{ logo_data_uri }}" alt="{{ settings.firm_name }}">
+            {% elif settings.firm_name %}
+                <div class="firm-name">{{ settings.firm_name }}</div>
+            {% endif %}
+        </div>
 
-        <div class="report-title">Отчёт о проверке публичной части сайта</div>
-        <div class="report-subtitle">Экспресс-анализ на признаки риска в области персональных данных</div>
+        <div class="cover-title">Экспресс-анализ рисков по 152-ФЗ</div>
+        <div class="cover-subtitle">Проверка публичной части сайта на признаки риска в области персональных данных</div>
 
         <div class="cover-meta">
             {% if result.company_name %}
-            <div><span class="label">Организация:</span>{{ result.company_name }}</div>
+            <div><span class="label">Организация</span><span class="val">{{ result.company_name }}</span></div>
             {% endif %}
-            <div><span class="label">Сайт:</span>{{ result.site_url }}</div>
-            {% if result.final_url and result.final_url != result.site_url %}
-            <div><span class="label">Итоговый адрес:</span>{{ result.final_url }}</div>
-            {% endif %}
-            {% if result.industry %}
-            <div><span class="label">Отрасль:</span>{{ result.industry }}</div>
-            {% endif %}
-            <div><span class="label">Дата формирования:</span>{{ generated_at }}</div>
-            <div>
-                <span class="label">Итоговый уровень риска:</span>
-                <span class="badge badge-{{ result.risk_level }}">{{ risk_level_ru }}</span>
-                <span class="muted">(баллы: {{ result.risk_score }}; достоверность: {{ result.confidence }}%)</span>
+            <div><span class="label">Сайт</span><span class="val">{{ result.site_url }}</span></div>
+            <div><span class="label">Отрасль</span><span class="val">{{ industry_ru }}</span></div>
+            <div><span class="label">Дата</span><span class="val">{{ generated_at }}</span></div>
+        </div>
+
+        <div class="verdict verdict-{{ result.risk_level }}">
+            <div class="verdict-col verdict-level">
+                <div class="verdict-cap">Уровень риска</div>
+                <div class="verdict-word">{{ risk_level_ru }}</div>
+            </div>
+            <div class="verdict-col verdict-score">
+                <div class="verdict-cap">Балл риска</div>
+                <div class="verdict-num">{{ risk_score_display }} <span class="verdict-den">/ 100</span></div>
+            </div>
+            <div class="verdict-col verdict-conf">
+                <div class="verdict-cap">Достоверность</div>
+                <div class="verdict-num">{{ result.confidence }}<span class="verdict-den">%</span></div>
             </div>
         </div>
 
-        <div class="disclaimer-box">
-            <span class="disclaimer-title">Важное уведомление об ограничениях отчёта</span>
-            {{ disclaimer }}
+        <div class="disclaimer-box cover-disclaimer">
+            {{ disclaimer_short }}
         </div>
     </section>
 
     {# ============================================================ #}
-    {# 2. Резюме (executive summary)                                #}
+    {# 2. СВОДКА: 4 плитки + топ-3 зоны риска                        #}
     {# ============================================================ #}
     <section class="section">
-        <h2>1. Краткое резюме</h2>
-        <div class="summary-grid">
-            <div class="summary-cell">
-                <span class="metric-label">Уровень риска</span>
-                <span class="metric-value">{{ risk_level_ru }}</span>
+        <h2>Сводка</h2>
+        <div class="tiles">
+            <div class="tile tile-risk">
+                <div class="tile-num">{{ metrics.risk_zones }}</div>
+                <div class="tile-cap">зон риска</div>
             </div>
-            <div class="summary-cell">
-                <span class="metric-label">Баллы риска</span>
-                <span class="metric-value">{{ result.risk_score }}</span>
+            <div class="tile">
+                <div class="tile-num">{{ metrics.pages_checked }}</div>
+                <div class="tile-cap">страниц проверено</div>
             </div>
-            <div class="summary-cell">
-                <span class="metric-label">Достоверность</span>
-                <span class="metric-value">{{ result.confidence }}%</span>
+            <div class="tile">
+                <div class="tile-num">{{ metrics.docs_found }}</div>
+                <div class="tile-cap">документов найдено</div>
+            </div>
+            <div class="tile">
+                <div class="tile-num">{{ metrics.foreign_services }}</div>
+                <div class="tile-cap">иностранных сервисов</div>
             </div>
         </div>
+
+        {% if top_risk_cards %}
+        <h3 class="sub">Главные зоны риска</h3>
+        <div class="top-risks">
+            {% for card in top_risk_cards %}
+            <div class="top-risk-card level-{{ card.level }}">
+                <div class="top-risk-head">
+                    <span class="top-risk-title">{{ card.title }}</span>
+                    <span class="chip chip-{{ card.level }}">{{ card.level_ru }}</span>
+                </div>
+                {% if card.phrase %}<div class="top-risk-phrase">{{ card.phrase }}</div>{% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="empty-note">Значимых зон риска в публичной части сайта автоматически не выявлено. Это не исключает необходимости проверки непубличных процессов и документов.</p>
+        {% endif %}
+
         {% if result.executive_summary %}
         <div class="summary-text">{{ result.executive_summary }}</div>
-        {% else %}
-        <p class="empty-note">Резюме не сформировано автоматически.</p>
         {% endif %}
-        <p class="muted">Проверено страниц: {{ result.pages_checked }}. Выявлено зон риска: {{ result.risks|length }}.</p>
     </section>
 
     {# ============================================================ #}
-    {# 3. Что проверено                                             #}
+    {# 3. БЛОК ОТВЕТСТВЕННОСТИ (справочно, крупные суммы)            #}
     {# ============================================================ #}
-    <section class="section">
-        <h2>2. Что проверено</h2>
-        <p class="section-lead">Проверка охватывает только публично доступную часть сайта. Ниже перечислены объекты, попавшие в анализ.</p>
-        <table class="data">
-            <tr><th>Объект проверки</th><th>Результат</th></tr>
-            <tr><td>Публичные страницы</td><td>{{ result.pages_checked }}</td></tr>
-            <tr><td>Формы сбора данных</td><td>{{ result.forms|length }}</td></tr>
-            <tr><td>Найденные документы</td><td>{{ result.documents|length }}</td></tr>
-            <tr><td>Сторонние сервисы и трекеры</td><td>{{ result.trackers|length }}</td></tr>
-            <tr><td>Cookie до согласия (проверено)</td><td>{{ result.cookies|length }}</td></tr>
-            <tr><td>Cookie-баннер</td><td>{% if result.cookie_banner_found %}обнаружен{% else %}не обнаружен{% endif %}</td></tr>
-            <tr><td>HTTPS</td><td>{% if result.technical.https_enabled %}используется{% else %}не подтверждён{% endif %}</td></tr>
+    <section class="section liability">
+        <div class="liability-header">Справочно: возможная ответственность</div>
+        <table class="liability-table">
+            {% for row in liability['items'] %}
+            <tr>
+                <td class="liab-label">
+                    {{ row.label }}
+                    {% if row.basis %}<div class="liab-basis">{{ row.basis }}</div>{% endif %}
+                </td>
+                <td class="liab-amount">{{ row.amount }}</td>
+            </tr>
+            {% endfor %}
         </table>
+        <div class="liability-disclaimer">{{ liability['disclaimer'] }}</div>
     </section>
 
     {# ============================================================ #}
-    {# 2а. Ядро-чеклист: основные проверки                          #}
+    {# 4. ЯДРО-ЧЕКЛИСТ (одна компактная таблица, БЕЗ повтора)        #}
     {# ============================================================ #}
     {% if result.core_checklist %}
     <section class="section">
-        <h2>2а. Основные проверки (ядро-чеклист)</h2>
-        <p class="section-lead">Фиксированный набор ключевых проверяемых пунктов. Статус «зона риска» означает признак возможного несоответствия и требует подтверждения юристом.</p>
-        <table class="data">
-            <tr><th>Пункт</th><th>Статус</th><th>Комментарий</th></tr>
+        <h2>Основные проверки</h2>
+        <p class="section-lead">Фиксированный набор ключевых пунктов. Статус «зона риска» означает признак возможного несоответствия и требует подтверждения юристом.</p>
+        <table class="core-table">
+            <tr><th>Проверка</th><th>Статус</th><th>Комментарий</th></tr>
             {% for it in result.core_checklist %}
             <tr>
                 <td>{{ it.label }}</td>
-                <td class="status-{{ it.status }}">{{ core_status_ru.get(it.status, it.status) }}</td>
-                <td>{{ it.comment }}{% if it.evidence %}<div class="quote">{{ it.evidence }}</div>{% endif %}</td>
+                <td class="cell-status">
+                    <span class="dot dot-{{ core_status_dot.get(it.status, 'na') }}"></span>{{ core_status_ru.get(it.status, it.status) }}
+                </td>
+                <td class="cell-comment">{{ it.comment }}</td>
             </tr>
             {% endfor %}
         </table>
@@ -115,149 +143,51 @@
     {% endif %}
 
     {# ============================================================ #}
-    {# 4. Выявленные признаки риска                                 #}
+    {# 5. ДОКУМЕНТЫ (краткие карточки, БЕЗ полного чек-листа)        #}
     {# ============================================================ #}
     <section class="section">
-        <h2>3. Выявленные признаки риска</h2>
-        {% if result.risks %}
-            <p class="section-lead">Ниже приведены выявленные зоны риска, отсортированные по значимости. Формулировки носят характер признаков риска и требуют подтверждения юристом.</p>
-            {% for risk in result.risks %}
-            <div class="risk-card level-{{ risk.risk_level }}">
-                <div class="risk-head">
-                    <span class="risk-title">{{ risk.title }}</span>
-                    <span class="badge badge-{{ risk.risk_level }}">{{ risk_level_ru_map.get(risk.risk_level, risk.risk_level) }}</span>
+        <h2>Документы</h2>
+        {% if unique_documents %}
+        <div class="doc-cards">
+            {% for doc in unique_documents %}
+            <div class="doc-card">
+                <div class="doc-card-head">
+                    <span class="doc-card-type">{{ doc.type_ru }}</span>
+                    {% if doc.completeness is not none %}
+                    <span class="doc-card-pct">Полнота {{ doc.completeness }}%</span>
+                    {% endif %}
                 </div>
-                {% if risk.client_friendly_explanation %}
-                <div class="risk-field">{{ risk.client_friendly_explanation }}</div>
-                {% elif risk.report_phrase %}
-                <div class="risk-field">{{ risk.report_phrase }}</div>
+                {% if doc.url %}<div class="doc-card-url mono">{{ doc.url }}</div>{% endif %}
+                {% if doc.completeness is not none %}
+                <div class="mini-bar"><div class="mini-fill" style="width: {{ doc.completeness }}%"></div></div>
                 {% endif %}
-                {% if risk.legal_meaning %}
-                <div class="risk-field"><span class="fld-label">Юридическое значение: </span>{{ risk.legal_meaning }}</div>
+                {% if doc.open_items %}
+                <div class="doc-card-gaps">
+                    <span class="gaps-label">Незакрытые пункты:</span>
+                    <ul>{% for gap in doc.open_items %}<li>{{ gap }}</li>{% endfor %}</ul>
+                </div>
+                {% elif doc.manual_only %}
+                <div class="muted">Документ найден; требует ручной проверки юристом.</div>
                 {% endif %}
-                {% if risk.recommendation %}
-                <div class="risk-field"><span class="fld-label">Рекомендация: </span>{{ risk.recommendation }}</div>
-                {% endif %}
-                {% if risk.evidence and risk.evidence.quote %}
-                <div class="quote">{{ risk.evidence.quote }}</div>
-                {% endif %}
-                {% if risk.evidence and risk.evidence.page_url %}
-                <div class="muted mono">Источник: {{ risk.evidence.page_url }}</div>
+                {% if doc.placeholder %}
+                <div class="doc-card-flag">Обнаружены признаки незаполненного шаблона — требует проверки.</div>
                 {% endif %}
             </div>
             {% endfor %}
-        {% else %}
-            <p class="empty-note">Значимых признаков риска в публичной части сайта автоматически не выявлено. Это не исключает необходимости проверки непубличных процессов и документов.</p>
-        {% endif %}
-    </section>
-
-    {# ============================================================ #}
-    {# 5. Проверка форм                                            #}
-    {# ============================================================ #}
-    <section class="section">
-        <h2>4. Проверка форм сбора данных</h2>
-        {% if result.forms %}
-        <table class="data">
-            <tr>
-                <th>Форма</th>
-                <th>Тип</th>
-                <th>Категории данных</th>
-                <th>Чекбокс согласия</th>
-                <th>Ссылка на политику</th>
-            </tr>
-            {% for form in result.forms %}
-            <tr>
-                <td>
-                    {{ form.form_type }}
-                    {% if form.submit_button_text %}<br><span class="muted">«{{ form.submit_button_text }}»</span>{% endif %}
-                </td>
-                <td>{% if form.potentially_personal_data_form %}сбор ПДн{% else %}прочее{% endif %}</td>
-                <td>{% if form.personal_data_fields %}{{ form.personal_data_fields|join(', ') }}{% else %}—{% endif %}</td>
-                <td>
-                    {% if form.consent.checkbox_found %}
-                        есть{% if form.consent.checkbox_prechecked %} (предотмечен){% endif %}
-                    {% elif form.consent.button_acceptance_only %}
-                        согласие «нажатием кнопки»
-                    {% else %}не обнаружен{% endif %}
-                </td>
-                <td>{% if form.consent.privacy_link_found %}есть{% else %}не обнаружена{% endif %}</td>
-            </tr>
-            {% endfor %}
-        </table>
-        <p class="muted">Формы не отправлялись. Оценка механики согласия сделана по разметке страницы и требует ручной проверки.</p>
-        {% else %}
-        <p class="empty-note">Формы сбора данных в публичной части сайта не обнаружены.</p>
-        {% endif %}
-    </section>
-
-    {# ============================================================ #}
-    {# 6. Проверка документов                                      #}
-    {# ============================================================ #}
-    <section class="section">
-        <h2>5. Проверка документов</h2>
-        {% if documents_by_type %}
-            {% for group in documents_by_type %}
-            <h3>{{ group.title }}</h3>
-            {% for doc in group.documents %}
-            <div class="doc-block">
-                <div class="doc-head">
-                    <span>
-                        {% if doc.title %}{{ doc.title }}{% else %}{{ group.title }}{% endif %}
-                        <span class="muted">({{ doc.format }})</span>
-                    </span>
-                    {% if doc.analysis %}
-                    <span class="badge badge-status">Полнота: {{ doc.analysis.overall_completeness }}%</span>
-                    {% endif %}
-                </div>
-                {% if doc.url %}<div class="muted mono">{{ doc.url }}</div>{% endif %}
-                {% if doc.analysis %}
-                    <div class="completeness-bar"><div class="completeness-fill" style="width: {{ doc.analysis.overall_completeness }}%"></div></div>
-                    {% if doc.analysis.summary %}<p>{{ doc.analysis.summary }}</p>{% endif %}
-                    {% if doc.analysis.checklist_results %}
-                    <table class="data">
-                        <tr><th>Пункт</th><th>Статус</th><th>Комментарий / цитата</th></tr>
-                        {% for item in doc.analysis.checklist_results %}
-                        <tr>
-                            <td>{{ item.label }}</td>
-                            <td class="status-{{ item.status }}">{{ checklist_status_ru.get(item.status, item.status) }}</td>
-                            <td>
-                                {% if item.comment %}{{ item.comment }}{% endif %}
-                                {% if item.evidence_quote %}<div class="quote">{{ item.evidence_quote }}</div>{% endif %}
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </table>
-                    {% endif %}
-                    {% if doc.analysis.conflicts %}
-                    <h4>Возможные расхождения</h4>
-                    <ul>
-                        {% for cf in doc.analysis.conflicts %}
-                        <li>{% if cf.comment %}{{ cf.comment }}{% else %}{{ cf.type }}{% endif %}</li>
-                        {% endfor %}
-                    </ul>
-                    {% endif %}
-                {% else %}
-                    <p class="muted">Документ найден; автоматический разбор по чек-листу не выполнен. Требует ручной проверки.</p>
-                {% endif %}
-                {% if doc.template_placeholder_detected %}
-                <p class="status-not_found">Обнаружены признаки незаполненного шаблона (плейсхолдеры). Требует проверки.</p>
-                {% endif %}
-            </div>
-            {% endfor %}
-            {% endfor %}
+        </div>
         {% else %}
         <p class="empty-note">Документы по обработке персональных данных в публичной части сайта не обнаружены. Их отсутствие в публичном доступе является признаком риска, требующим проверки.</p>
         {% endif %}
     </section>
 
     {# ============================================================ #}
-    {# 7. Cookie и сторонние сервисы                               #}
+    {# 6. COOKIE / трекеры + техническая проверка (компактно)       #}
     {# ============================================================ #}
     <section class="section">
-        <h2>6. Cookie и сторонние сервисы</h2>
+        <h2>Cookie, сторонние сервисы и техника</h2>
         {% if result.trackers %}
         <table class="data">
-            <tr><th>Сервис</th><th>Категория</th><th>Происхождение</th><th>Уровень риска</th></tr>
+            <tr><th>Сервис</th><th>Категория</th><th>Происхождение</th><th>Риск</th></tr>
             {% for tr in result.trackers %}
             <tr>
                 <td>{{ tr.provider_name }}{% if tr.matched_domain %}<br><span class="muted mono">{{ tr.matched_domain }}</span>{% endif %}</td>
@@ -270,34 +200,21 @@
         {% else %}
         <p class="empty-note">Сторонние сервисы и трекеры автоматически не обнаружены.</p>
         {% endif %}
-        <ul>
-            <li>Cookie-баннер: {% if result.cookie_banner_found %}обнаружен{% else %}не обнаружен{% endif %}.</li>
-            <li>Признаки установки маркетинговых cookie до согласия: {% if result.marketing_cookies_before_consent %}выявлены (требует проверки){% else %}автоматически не выявлены{% endif %}.</li>
-            <li>Зарубежные сторонние сервисы: {% if result.foreign_trackers_found %}присутствуют (возможна трансграничная передача — требует проверки){% else %}автоматически не выявлены{% endif %}.</li>
-        </ul>
-    </section>
-
-    {# ============================================================ #}
-    {# 8. Техническая проверка                                     #}
-    {# ============================================================ #}
-    <section class="section">
-        <h2>7. Техническая проверка</h2>
-        <table class="data">
+        <table class="data compact">
+            <tr><td>Cookie-баннер</td><td>{% if result.cookie_banner_found %}обнаружен{% else %}не обнаружен{% endif %}</td></tr>
+            <tr><td>Маркетинговые cookie до согласия</td><td>{% if result.marketing_cookies_before_consent %}признаки выявлены (требует проверки){% else %}не выявлены{% endif %}</td></tr>
+            <tr><td>Зарубежные сторонние сервисы</td><td>{% if result.foreign_trackers_found %}присутствуют (возможна трансграничная передача){% else %}не выявлены{% endif %}</td></tr>
             <tr><td>HTTPS</td><td>{% if result.technical.https_enabled %}используется{% else %}не подтверждён{% endif %}</td></tr>
             <tr><td>Переадресация HTTP → HTTPS</td><td>{% if result.technical.http_to_https_redirect %}настроена{% else %}не подтверждена{% endif %}</td></tr>
-            <tr><td>Смешанный контент (mixed content)</td><td>{% if result.technical.mixed_content_found %}обнаружен ({{ result.technical.mixed_content_urls|length }}){% else %}не обнаружен{% endif %}</td></tr>
             <tr><td>Предполагаемая страна сервера</td><td>{{ result.technical.server_country }}{% if result.technical.geoip_confidence %} (достоверность {{ result.technical.geoip_confidence }}%){% endif %}</td></tr>
-            <tr><td>CDN</td><td>{% if result.technical.cdn_detected %}{{ result.technical.cdn_detected }}{% else %}не определён{% endif %}</td></tr>
-            <tr><td>robots.txt</td><td>{% if result.technical.robots_txt_found %}найден{% else %}не найден{% endif %}</td></tr>
-            <tr><td>sitemap</td><td>{% if result.technical.sitemap_found %}найден{% else %}не найден{% endif %}</td></tr>
         </table>
     </section>
 
     {# ============================================================ #}
-    {# 9. Что рекомендуется исправить (приоритеты)                 #}
+    {# 7. РЕКОМЕНДАЦИИ + КП/пакеты + повтор ограничений             #}
     {# ============================================================ #}
     <section class="section">
-        <h2>8. Что рекомендуется исправить</h2>
+        <h2>Что рекомендуется исправить</h2>
         {% if recommendations.urgent or recommendations.soon or recommendations.optional %}
             {% if recommendations.urgent %}
             <div class="rec-group rec-priority-urgent">
@@ -334,11 +251,8 @@
         {% endif %}
     </section>
 
-    {# ============================================================ #}
-    {# 10. Коммерческое предложение                                #}
-    {# ============================================================ #}
     <section class="section">
-        <h2>9. Коммерческое предложение</h2>
+        <h2>Как мы можем помочь</h2>
         {% if result.commercial_offer_text %}
         <div class="offer-text">{{ result.commercial_offer_text }}</div>
         {% endif %}
@@ -362,26 +276,21 @@
         <p class="empty-note">Состав пакетов услуг уточняется. Свяжитесь с бюро для подготовки предложения.</p>
         {% endif %}
         {% if firm_contact_lines %}
-        <div class="footer-note">
+        <div class="contact-block">
             {% for line in firm_contact_lines %}<div>{{ line }}</div>{% endfor %}
         </div>
         {% endif %}
     </section>
 
-    {# ============================================================ #}
-    {# 11. Ограничения проверки                                    #}
-    {# ============================================================ #}
-    <section class="section">
-        <h2>10. Ограничения проверки</h2>
+    <section class="section limitations">
+        <h2>Ограничения проверки</h2>
         <p class="section-lead">Автоматический анализ не заменяет юридическую экспертизу. Система, в частности, не имеет доступа к следующему:</p>
         <ul class="scope-list">
             {% for lim in scope_limitations %}
             <li>{{ lim }}</li>
             {% endfor %}
         </ul>
-        {% if manual_review_note %}
-        <div class="disclaimer-box" style="margin-top:14px;">{{ manual_review_note }}</div>
-        {% endif %}
+        <div class="disclaimer-box">{{ disclaimer }}</div>
     </section>
 
     <div class="footer-note">

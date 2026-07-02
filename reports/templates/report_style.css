@@ -1,366 +1,484 @@
 /*
- * Стили отчёта юридического бюро. Ориентированы на печать в A4 (PDF),
- * при этом корректно отображаются и в браузере (HTML-предпросмотр).
- * Нейтральная деловая типографика, без агрессивных цветов.
+ * Стили отчёта юридического бюро: короткий, продающий документ по 152-ФЗ.
+ * Тёмно-синий акцент (#12355B / #1E4E8C). Оптимизировано под печать в A4 (PDF)
+ * и корректный HTML-предпросмотр. Без эмодзи (WeasyPrint не имеет эмодзи-шрифта) —
+ * статусы показываются цветными точками и текстом.
  */
 
 @page {
     size: A4;
-    margin: 18mm 16mm 20mm 16mm;
+    margin: 16mm 15mm 18mm 15mm;
 }
 
-* {
-    box-sizing: border-box;
+:root {
+    --navy: #12355B;
+    --navy-2: #1E4E8C;
+    --ink: #1f2933;
+    --muted: #626d78;
+    --line: #d5dee6;
+    --panel: #f4f7fb;
+
+    --risk-critical: #7a1f1f;
+    --risk-high: #b4531b;
+    --risk-medium: #b8860b;
+    --risk-low: #2e6a4f;
+    --risk-unknown: #626d78;
 }
 
-html, body {
-    margin: 0;
-    padding: 0;
-}
+* { box-sizing: border-box; }
+
+html, body { margin: 0; padding: 0; }
 
 body {
     font-family: "PT Sans", "DejaVu Sans", "Segoe UI", Arial, sans-serif;
-    font-size: 11pt;
+    font-size: 10.5pt;
     line-height: 1.5;
-    color: #1f2933;
+    color: var(--ink);
     background: #ffffff;
 }
 
 .report {
     max-width: 210mm;
     margin: 0 auto;
-    padding: 0 4mm;
+    padding: 0 3mm;
 }
 
 /* --- Типографика --- */
 h1, h2, h3, h4 {
-    color: #0f2a43;
+    color: var(--navy);
     font-weight: 700;
     margin: 0 0 8px 0;
     line-height: 1.25;
 }
 
-h1 {
-    font-size: 22pt;
-}
-
 h2 {
     font-size: 15pt;
-    border-bottom: 2px solid #0f2a43;
+    border-bottom: 2px solid var(--navy);
     padding-bottom: 4px;
     margin-top: 6px;
 }
 
-h3 {
-    font-size: 12.5pt;
-    color: #24405c;
-}
+h3 { font-size: 12pt; color: var(--navy-2); }
+h3.sub { margin-top: 14px; }
 
-h4 {
-    font-size: 11pt;
-    color: #24405c;
-    margin-bottom: 4px;
-}
+p { margin: 0 0 8px 0; }
 
-p {
-    margin: 0 0 8px 0;
-}
+a { color: var(--navy-2); text-decoration: none; word-break: break-all; }
 
-a {
-    color: #1c4e80;
-    text-decoration: none;
-    word-break: break-all;
-}
+ul, ol { margin: 0 0 8px 0; padding-left: 20px; }
+li { margin-bottom: 3px; }
 
-ul, ol {
-    margin: 0 0 8px 0;
-    padding-left: 20px;
-}
-
-li {
-    margin-bottom: 3px;
-}
-
-small, .muted {
-    color: #626d78;
-    font-size: 9.5pt;
-}
+small, .muted { color: var(--muted); font-size: 9pt; }
 
 .mono {
     font-family: "DejaVu Sans Mono", "Consolas", monospace;
-    font-size: 9.5pt;
+    font-size: 9pt;
     word-break: break-all;
 }
 
-/* --- Секции --- */
 .section {
     page-break-inside: auto;
     margin-bottom: 18px;
 }
 
-.section-lead {
-    color: #3a4a58;
-    margin-bottom: 10px;
-}
+.section-lead { color: #3a4a58; margin-bottom: 10px; }
 
-.spacer {
-    height: 8px;
-}
+.empty-note { color: var(--muted); font-style: italic; }
 
-.page-break {
-    page-break-before: always;
-}
-
-/* --- Обложка --- */
+/* ============================================================ */
+/* 1. ОБЛОЖКА / HERO                                             */
+/* ============================================================ */
 .cover {
     page-break-after: always;
-    padding-top: 30mm;
-    text-align: left;
+    padding-top: 14mm;
 }
 
-.cover .logo {
-    max-height: 90px;
-    max-width: 260px;
-    margin-bottom: 24px;
-}
+.cover-brand { margin-bottom: 20px; }
+
+.cover .logo { max-height: 80px; max-width: 240px; }
 
 .cover .firm-name {
     font-size: 13pt;
-    color: #24405c;
+    color: var(--navy-2);
     font-weight: 700;
-    margin-bottom: 4px;
+    letter-spacing: 0.3px;
 }
 
-.cover .report-title {
-    font-size: 26pt;
-    margin: 30px 0 8px 0;
+.cover-title {
+    font-size: 30pt;
+    font-weight: 700;
+    color: var(--navy);
+    line-height: 1.12;
+    margin: 18px 0 6px 0;
 }
 
-.cover .report-subtitle {
-    font-size: 14pt;
+.cover-subtitle {
+    font-size: 12.5pt;
     color: #3a4a58;
     margin-bottom: 24px;
 }
 
-.cover .cover-meta {
-    margin-top: 22px;
-    font-size: 11pt;
+.cover-meta {
+    margin: 0 0 22px 0;
+    font-size: 10.5pt;
 }
 
-.cover .cover-meta div {
-    margin-bottom: 4px;
-}
+.cover-meta div { margin-bottom: 4px; }
 
-.cover .cover-meta .label {
+.cover-meta .label {
     display: inline-block;
-    min-width: 150px;
-    color: #626d78;
+    min-width: 120px;
+    color: var(--muted);
 }
+
+.cover-meta .val { color: var(--ink); font-weight: 700; }
+
+/* Крупный вердикт риска */
+.verdict {
+    display: table;
+    width: 100%;
+    border-collapse: collapse;
+    margin: 6px 0 22px 0;
+    border: 2px solid var(--navy);
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--panel);
+}
+
+.verdict-col {
+    display: table-cell;
+    width: 33.33%;
+    padding: 16px 14px;
+    vertical-align: middle;
+    text-align: center;
+    border-left: 1px solid var(--line);
+}
+.verdict-col:first-child { border-left: none; }
+
+.verdict-cap {
+    font-size: 9pt;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--muted);
+    margin-bottom: 6px;
+}
+
+.verdict-word {
+    font-size: 26pt;
+    font-weight: 700;
+    line-height: 1.05;
+    text-transform: capitalize;
+    color: var(--navy);
+}
+
+.verdict-num {
+    font-size: 30pt;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--navy);
+}
+
+.verdict-den { font-size: 14pt; color: var(--muted); font-weight: 700; }
+
+/* Цвет слова уровня риска по уровню */
+.verdict-critical .verdict-word { color: var(--risk-critical); }
+.verdict-high     .verdict-word { color: var(--risk-high); }
+.verdict-medium   .verdict-word { color: var(--risk-medium); }
+.verdict-low      .verdict-word { color: var(--risk-low); }
+.verdict-unknown  .verdict-word { color: var(--risk-unknown); }
+
+.cover-disclaimer { margin-top: 8px; }
 
 .disclaimer-box {
-    margin-top: 30px;
-    padding: 12px 14px;
+    padding: 10px 13px;
     border: 1px solid #c9d4de;
-    border-left: 4px solid #0f2a43;
-    background: #f5f8fb;
-    font-size: 9.5pt;
+    border-left: 4px solid var(--navy);
+    background: var(--panel);
+    font-size: 9pt;
     color: #3a4a58;
     line-height: 1.45;
 }
 
-.disclaimer-box .disclaimer-title {
-    font-weight: 700;
-    color: #0f2a43;
-    margin-bottom: 4px;
-    display: block;
-}
-
-/* --- Плашки уровня риска --- */
-.badge {
-    display: inline-block;
-    padding: 2px 10px;
-    border-radius: 3px;
-    font-size: 9.5pt;
-    font-weight: 700;
-    color: #ffffff;
-    white-space: nowrap;
-}
-
-.badge-critical { background: #7a1f1f; }
-.badge-high     { background: #b4531b; }
-.badge-medium   { background: #b8860b; }
-.badge-low      { background: #2e6a4f; }
-.badge-unknown  { background: #626d78; }
-
-.badge-status {
-    background: #e7edf3;
-    color: #24405c;
-}
-
-/* --- Сводная плашка (executive) --- */
-.summary-grid {
+/* ============================================================ */
+/* 2. СВОДКА: плитки + топ-риски                                */
+/* ============================================================ */
+.tiles {
     display: table;
     width: 100%;
-    border-collapse: collapse;
-    margin-bottom: 12px;
+    border-collapse: separate;
+    border-spacing: 6px 0;
+    margin: 4px 0 12px 0;
 }
 
-.summary-cell {
+.tile {
     display: table-cell;
-    width: 33%;
-    border: 1px solid #d5dee6;
-    padding: 10px 12px;
-    vertical-align: top;
+    width: 25%;
+    border: 1px solid var(--line);
+    border-top: 3px solid var(--navy-2);
+    border-radius: 4px;
+    padding: 12px 8px;
     text-align: center;
+    vertical-align: top;
+    background: #fff;
 }
 
-.summary-cell .metric-label {
-    font-size: 9.5pt;
-    color: #626d78;
-    display: block;
-    margin-bottom: 4px;
-}
+.tile-risk { border-top-color: var(--risk-high); }
 
-.summary-cell .metric-value {
-    font-size: 18pt;
+.tile-num {
+    font-size: 24pt;
     font-weight: 700;
-    color: #0f2a43;
+    color: var(--navy);
+    line-height: 1;
 }
+.tile-risk .tile-num { color: var(--risk-high); }
+
+.tile-cap {
+    font-size: 9pt;
+    color: var(--muted);
+    margin-top: 5px;
+}
+
+.top-risks { margin-top: 4px; }
+
+.top-risk-card {
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--risk-unknown);
+    padding: 9px 12px;
+    margin-bottom: 8px;
+    page-break-inside: avoid;
+}
+.top-risk-card.level-critical { border-left-color: var(--risk-critical); }
+.top-risk-card.level-high     { border-left-color: var(--risk-high); }
+.top-risk-card.level-medium   { border-left-color: var(--risk-medium); }
+.top-risk-card.level-low      { border-left-color: var(--risk-low); }
+
+.top-risk-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 3px;
+}
+
+.top-risk-title { font-weight: 700; color: var(--navy); font-size: 11pt; }
+
+.top-risk-phrase { color: #3a4a58; }
 
 .summary-text {
     white-space: pre-line;
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid var(--line);
+}
+
+/* --- Чипы уровня --- */
+.chip {
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 3px;
+    font-size: 8.5pt;
+    font-weight: 700;
+    color: #fff;
+    white-space: nowrap;
+}
+.chip-critical { background: var(--risk-critical); }
+.chip-high     { background: var(--risk-high); }
+.chip-medium   { background: var(--risk-medium); }
+.chip-low      { background: var(--risk-low); }
+.chip-unknown  { background: var(--risk-unknown); }
+
+/* ============================================================ */
+/* 3. БЛОК ОТВЕТСТВЕННОСТИ (крупные суммы)                      */
+/* ============================================================ */
+.liability {
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    overflow: hidden;
+    page-break-inside: avoid;
+}
+
+.liability-header {
+    background: var(--navy);
+    color: #fff;
+    font-size: 14pt;
+    font-weight: 700;
+    padding: 12px 16px;
+}
+
+.liability-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.liability-table td {
+    padding: 12px 16px;
+    border-top: 1px solid var(--line);
+    vertical-align: middle;
+}
+.liability-table tr:first-child td { border-top: none; }
+
+.liab-label { font-size: 11pt; color: var(--ink); font-weight: 700; }
+.liab-basis { font-size: 9pt; color: var(--muted); font-weight: 400; margin-top: 2px; }
+
+.liab-amount {
+    text-align: right;
+    white-space: nowrap;
+    font-size: 20pt;
+    font-weight: 700;
+    color: var(--risk-critical);
+    width: 34%;
+}
+
+.liability-disclaimer {
+    padding: 11px 16px;
+    background: var(--panel);
+    border-top: 1px solid var(--line);
+    font-size: 9pt;
+    color: #3a4a58;
+    line-height: 1.45;
+}
+
+/* ============================================================ */
+/* 4. ЯДРО-ЧЕКЛИСТ (одна таблица)                               */
+/* ============================================================ */
+table.core-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 9.5pt;
     margin-bottom: 8px;
 }
 
-/* --- Таблицы --- */
+table.core-table th,
+table.core-table td {
+    border: 1px solid var(--line);
+    padding: 5px 8px;
+    text-align: left;
+    vertical-align: top;
+}
+
+table.core-table th {
+    background: var(--navy);
+    color: #fff;
+    font-weight: 700;
+}
+
+table.core-table tr { page-break-inside: avoid; }
+table.core-table tr:nth-child(even) td { background: #fafcfe; }
+
+.cell-status { white-space: nowrap; font-weight: 700; }
+.cell-comment { color: #3a4a58; }
+
+.dot {
+    display: inline-block;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    margin-right: 6px;
+    vertical-align: middle;
+}
+.dot-ok      { background: var(--risk-low); }
+.dot-risk    { background: var(--risk-critical); }
+.dot-unclear { background: var(--risk-medium); }
+.dot-na      { background: var(--risk-unknown); }
+
+/* ============================================================ */
+/* 5. ДОКУМЕНТЫ (краткие карточки)                              */
+/* ============================================================ */
+.doc-cards { margin-top: 2px; }
+
+.doc-card {
+    border: 1px solid var(--line);
+    border-top: 3px solid var(--navy-2);
+    border-radius: 4px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    page-break-inside: avoid;
+}
+
+.doc-card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 3px;
+}
+
+.doc-card-type { font-weight: 700; color: var(--navy); font-size: 11pt; }
+
+.doc-card-pct {
+    background: #e7edf3;
+    color: var(--navy-2);
+    font-weight: 700;
+    font-size: 9pt;
+    padding: 2px 9px;
+    border-radius: 3px;
+    white-space: nowrap;
+}
+
+.doc-card-url { color: var(--muted); margin-bottom: 6px; }
+
+.mini-bar {
+    height: 8px;
+    background: #e7edf3;
+    border-radius: 4px;
+    overflow: hidden;
+    margin: 4px 0 8px 0;
+}
+.mini-fill { height: 100%; background: var(--navy-2); }
+
+.doc-card-gaps { margin-top: 2px; }
+.doc-card-gaps .gaps-label { font-size: 9pt; color: var(--muted); font-weight: 700; }
+.doc-card-gaps ul { margin: 3px 0 0 0; }
+.doc-card-gaps li { color: var(--risk-high); }
+
+.doc-card-flag {
+    margin-top: 6px;
+    color: var(--risk-high);
+    font-weight: 700;
+    font-size: 9.5pt;
+}
+
+/* ============================================================ */
+/* 6. Таблицы данных (cookie/техника)                           */
+/* ============================================================ */
 table.data {
     width: 100%;
     border-collapse: collapse;
     margin-bottom: 10px;
-    font-size: 10pt;
+    font-size: 9.5pt;
 }
 
 table.data th,
 table.data td {
-    border: 1px solid #d5dee6;
-    padding: 6px 8px;
+    border: 1px solid var(--line);
+    padding: 5px 8px;
     text-align: left;
     vertical-align: top;
 }
 
 table.data th {
     background: #eef3f8;
-    color: #24405c;
+    color: var(--navy-2);
     font-weight: 700;
 }
 
-table.data tr {
-    page-break-inside: avoid;
-}
+table.data tr { page-break-inside: avoid; }
+table.data.compact td:first-child { width: 46%; color: #3a4a58; }
 
-/* --- Карточки рисков --- */
-.risk-card {
-    border: 1px solid #d5dee6;
-    border-left: 4px solid #626d78;
-    padding: 10px 12px;
-    margin-bottom: 10px;
-    page-break-inside: avoid;
-}
+/* ============================================================ */
+/* 7. Рекомендации / КП / ограничения                          */
+/* ============================================================ */
+.rec-group { margin-bottom: 12px; }
+.rec-group h3 { margin-bottom: 6px; }
+.rec-priority-urgent h3   { color: var(--risk-critical); }
+.rec-priority-soon h3     { color: var(--risk-high); }
+.rec-priority-optional h3 { color: var(--risk-low); }
 
-.risk-card.level-critical { border-left-color: #7a1f1f; }
-.risk-card.level-high     { border-left-color: #b4531b; }
-.risk-card.level-medium   { border-left-color: #b8860b; }
-.risk-card.level-low      { border-left-color: #2e6a4f; }
-
-.risk-card .risk-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: 10px;
-    margin-bottom: 6px;
-}
-
-.risk-card .risk-title {
-    font-weight: 700;
-    color: #0f2a43;
-    font-size: 11.5pt;
-}
-
-.risk-card .risk-field {
-    margin-bottom: 4px;
-}
-
-.risk-card .risk-field .fld-label {
-    color: #626d78;
-    font-weight: 700;
-}
-
-.quote {
-    border-left: 3px solid #c9d4de;
-    padding: 4px 10px;
-    margin: 6px 0;
-    color: #3a4a58;
-    background: #f7f9fb;
-    font-style: italic;
-    white-space: pre-line;
-}
-
-/* --- Документы --- */
-.doc-block {
-    border: 1px solid #d5dee6;
-    padding: 10px 12px;
-    margin-bottom: 12px;
-    page-break-inside: avoid;
-}
-
-.doc-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: 10px;
-    margin-bottom: 6px;
-}
-
-.completeness-bar {
-    height: 10px;
-    background: #e7edf3;
-    border-radius: 5px;
-    overflow: hidden;
-    margin: 4px 0 8px 0;
-}
-
-.completeness-fill {
-    height: 100%;
-    background: #2e6a4f;
-}
-
-.status-found      { color: #2e6a4f; font-weight: 700; }
-.status-not_found  { color: #b4531b; font-weight: 700; }
-.status-unclear    { color: #b8860b; font-weight: 700; }
-.status-not_applicable { color: #626d78; }
-
-/* --- Рекомендации --- */
-.rec-group {
-    margin-bottom: 12px;
-}
-
-.rec-group h3 {
-    margin-bottom: 6px;
-}
-
-.rec-priority-urgent h3   { color: #7a1f1f; }
-.rec-priority-soon h3     { color: #b4531b; }
-.rec-priority-optional h3 { color: #2e6a4f; }
-
-/* --- Коммерческое предложение --- */
-.offer-text {
-    white-space: pre-line;
-    margin-bottom: 14px;
-}
+.offer-text { white-space: pre-line; margin-bottom: 14px; }
 
 .package-card {
-    border: 1px solid #d5dee6;
-    border-top: 3px solid #0f2a43;
+    border: 1px solid var(--line);
+    border-top: 3px solid var(--navy);
     padding: 10px 12px;
     margin-bottom: 10px;
     page-break-inside: avoid;
@@ -374,38 +492,26 @@ table.data tr {
     margin-bottom: 4px;
 }
 
-.package-card .pkg-title {
-    font-weight: 700;
-    color: #0f2a43;
-    font-size: 12pt;
-}
+.package-card .pkg-title { font-weight: 700; color: var(--navy); font-size: 12pt; }
+.package-card .pkg-price { font-weight: 700; color: var(--navy-2); white-space: nowrap; }
+.package-card .pkg-duration { color: var(--muted); font-size: 9pt; margin-bottom: 6px; }
 
-.package-card .pkg-price {
-    font-weight: 700;
-    color: #24405c;
-    white-space: nowrap;
-}
-
-.package-card .pkg-duration {
-    color: #626d78;
+.contact-block {
+    margin-top: 14px;
+    padding: 10px 13px;
+    background: var(--panel);
+    border-left: 4px solid var(--navy);
     font-size: 9.5pt;
-    margin-bottom: 6px;
-}
-
-/* --- Ограничения --- */
-.scope-list li {
     color: #3a4a58;
 }
+
+.scope-list li { color: #3a4a58; }
+.limitations .disclaimer-box { margin-top: 12px; }
 
 .footer-note {
     margin-top: 18px;
     padding-top: 10px;
-    border-top: 1px solid #d5dee6;
-    font-size: 9pt;
-    color: #626d78;
-}
-
-.empty-note {
-    color: #626d78;
-    font-style: italic;
+    border-top: 1px solid var(--line);
+    font-size: 8.5pt;
+    color: var(--muted);
 }

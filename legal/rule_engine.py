@@ -660,10 +660,12 @@ def _r025(ctx: ScanContext) -> Optional[Evidence]:
 
 
 def _r026(ctx: ScanContext) -> Optional[Evidence]:
-    """Политика принадлежит другой компании/домену.
+    """В политике указан контактный домен другой организации/группы.
 
-    Срабатывает только при явном конфликте: у анализа документа есть Conflict,
-    тип которого указывает на несоответствие компании/домена.
+    Срабатывает при детерминированном (не-LLM) конфликте по компании/домену.
+    Уровень риска — MEDIUM (см. legal_rules.yml): несовпадение email-домена часто
+    означает лишь другой домен той же организации/группы, поэтому вывод формулируется
+    как «уточнить юрлицо», а не как критическое «политика чужой компании».
     """
     try:
         for d in _all_analyzed_docs(ctx):
@@ -671,9 +673,9 @@ def _r026(ctx: ScanContext) -> Optional[Evidence]:
             if analysis is None:
                 continue
             for conflict in getattr(analysis, "conflicts", []) or []:
-                # Критичный вывод «политика другой компании» допускаем только по
-                # ДЕТЕРМИНИРОВАННОМУ конфликту (не по предложению LLM) и только для
-                # типов, явно указывающих на несоответствие компании/домена.
+                # Вывод по компании/домену допускаем только по ДЕТЕРМИНИРОВАННОМУ
+                # конфликту (не по предложению LLM) и только для типов, явно
+                # указывающих на несоответствие компании/домена.
                 if (getattr(conflict, "source", "heuristic") or "heuristic").lower() == "llm":
                     continue
                 ctype = (getattr(conflict, "type", "") or "").lower()
@@ -681,8 +683,8 @@ def _r026(ctx: ScanContext) -> Optional[Evidence]:
                     return _evidence(
                         page_url=getattr(d, "url", "") or _first_page_url(ctx),
                         quote=getattr(conflict, "comment", "")
-                        or "Обнаружен признак того, что реквизиты в политике "
-                        "относятся к иной компании/домену, чем проверяемый сайт.",
+                        or "В политике указан контактный домен другой "
+                        "организации/группы — требуется уточнить юрлицо оператора.",
                         extra={
                             "conflict_type": getattr(conflict, "type", ""),
                             "detected_fact": getattr(conflict, "detected_fact", ""),

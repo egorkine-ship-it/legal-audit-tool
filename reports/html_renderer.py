@@ -52,6 +52,12 @@ except Exception:  # pragma: no cover - модуль всегда должен �
 
 
 _TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
+# Каталог data/ в корне проекта (…/reports/html_renderer.py -> корень на уровень выше).
+_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+
+# Отчёт капает баллы риска на 100 (шкала «N / 100»): если движок вернул больше,
+# в отчёте всё равно показываем 100.
+_SCORE_CAP = 100
 
 # Человекочитаемые подписи для статусов пунктов чек-листа.
 CHECKLIST_STATUS_RU = {
@@ -66,6 +72,110 @@ COUNTRY_HINT_RU = {
     "foreign": "зарубежный",
     "unknown": "не определено",
 }
+
+# Цветовая точка + подпись для статусов ядро-чеклиста (без эмодзи — WeasyPrint
+# не имеет эмодзи-шрифта, поэтому используем цветные CSS-точки и текст).
+CORE_STATUS_DOT = {
+    "ok": "ok",
+    "risk": "risk",
+    "unclear": "unclear",
+    "not_applicable": "na",
+}
+
+# Отрасль "auto" — это значение по умолчанию (не выбрана пользователем), а не
+# реальная отрасль «авто». В отчёте показываем нейтральное «не указана».
+_INDUSTRY_ALIASES = {
+    "auto": "не указана",
+    "": "не указана",
+}
+
+# Встроенный запасной список возможной ответственности (нейтральные, справочные
+# формулировки). Используется, если data/liability.yml отсутствует/нечитаем.
+# Схема совпадает с data/liability.yml (владелец — агент B).
+_DEFAULT_LIABILITY = {
+    "disclaimer": (
+        "Суммы приведены исключительно справочно как возможная ответственность по "
+        "действующему законодательству и не являются утверждением о нарушении. "
+        "Итоговая квалификация и размер ответственности определяются юристом с "
+        "учётом конкретных обстоятельств."
+    ),
+    "items": [
+        {
+            "label": "Обработка ПДн без надлежащего согласия",
+            "basis": "ст. 13.11 КоАП РФ",
+            "amount": "до 700 000 ₽",
+        },
+        {
+            "label": "Неопубликование/неполнота политики обработки ПДн",
+            "basis": "ст. 13.11 КоАП РФ",
+            "amount": "до 100 000 ₽",
+        },
+        {
+            "label": "Нарушение требований к трансграничной передаче ПДн",
+            "basis": "КоАП РФ",
+            "amount": "отдельный состав",
+        },
+    ],
+}
+
+
+def _clamp_score(value: Any) -> int:
+    """Привести балл риска к целому в диапазоне 0..100. Никогда не бросает."""
+    try:
+        n = int(value)
+    except Exception:
+        return 0
+    if n < 0:
+        return 0
+    if n > _SCORE_CAP:
+        return _SCORE_CAP
+    return n
+
+
+def _industry_ru(industry: Any) -> str:
+    """Человекочитаемая отрасль: 'auto'/пусто -> «не указана»."""
+    raw = str(industry or "").strip()
+    return _INDUSTRY_ALIASES.get(raw.lower(), raw) or "не указана"
+
+
+def _load_liability() -> Dict[str, Any]:
+    """Прочитать data/liability.yml. При любой ошибке — встроенный запасной список.
+
+    Возвращает словарь {"disclaimer": str, "items": [{"label","basis","amount"}]}.
+    Никогда не бросает исключение.
+    """
+    path = os.path.join(_DATA_DIR, "liability.yml")
+    try:
+        import yaml  # type: ignore
+
+        with open(path, "r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+        if not isinstance(data, dict):
+            return dict(_DEFAULT_LIABILITY)
+        raw_items = data.get("items")
+        items: List[Dict[str, str]] = []
+        if isinstance(raw_items, list):
+            for it in raw_items:
+                if not isinstance(it, dict):
+                    continue
+                label = str(it.get("label") or "").strip()
+                if not label:
+                    continue
+                items.append(
+                    {
+                        "label": label,
+                        "basis": str(it.get("basis") or "").strip(),
+                        "amount": str(it.get("amount") or "").strip(),
+                    }
+                )
+        if not items:
+            return dict(_DEFAULT_LIABILITY)
+        disclaimer = str(data.get("disclaimer") or "").strip()
+        if not disclaimer:
+            disclaimer = _DEFAULT_LIABILITY["disclaimer"]
+        return {"disclaimer": disclaimer, "items": items}
+    except Exception:
+        return dict(_DEFAULT_LIABILITY)
 
 
 # ---------------------------------------------------------------------------
@@ -170,25 +280,84 @@ def _ordered_packages(packages: Optional[dict], settings: Any) -> List[Dict[str,
     return out
 
 
-def _group_documents(result: ScanResult) -> List[Dict[str, Any]]:
-    """Сгруппировать документы по типу, сохраняя порядок появления типов."""
-    order: List[str] = []
-    groups: Dict[str, List[Any]] = {}
-    for doc in result.documents:
-        dt = getattr(doc, "doc_type", "other") or "other"
-        if dt not in groups:
-            groups[dt] = []
-            order.append(dt)
-        groups[dt].append(doc)
+def _doc_completeness(doc: Any) -> Optional[int]:
+    """Полнота документа (%) из analysis.overall_completeness, либо None."""
+    analysis = getattr(doc, "analysis", None)
+    if analysis is None:
+        return None
+    try:
+        return int(getattr(analysis, "overall_completeness", 0) or 0)
+    except Exception:
+        return None
+
+
+def _doc_open_items(doc: Any, limit: int = 3) -> List[str]:
+    """2-3 главных незакрытых пункта документа (по чек-листу его analysis).
+
+    Незакрытыми считаются пункты со статусом not_found/unclear. Возвращаем
+    подписи (label) в порядке значимости (сначала not_found, затем unclear).
+    """
+    analysis = getattr(doc, "analysis", None)
+    if analysis is None:
+        return []
+    not_found: List[str] = []
+    unclear: List[str] = []
+    try:
+        for item in getattr(analysis, "checklist_results", None) or []:
+            status = getattr(item, "status", "") or ""
+            label = str(getattr(item, "label", "") or "").strip()
+            if not label:
+                continue
+            if status == ChecklistStatus.not_found.value:
+                not_found.append(label)
+            elif status == ChecklistStatus.unclear.value:
+                unclear.append(label)
+    except Exception:
+        return []
+    return (not_found + unclear)[:limit]
+
+
+def _unique_documents(result: ScanResult) -> List[Dict[str, Any]]:
+    """Уникальные найденные документы для кратких карточек.
+
+    Берём только реально существующие документы (is_accessible или
+    link_confirmed), пропуская неподтверждённые «догадки». Дедупликация по
+    (doc_type, url). Порядок появления сохраняется. Для каждого документа —
+    компактная сводка: тип, URL, полнота %, 2-3 главных незакрытых пункта.
+    """
+    seen = set()
     out: List[Dict[str, Any]] = []
-    for dt in order:
-        out.append(
-            {
-                "doc_type": dt,
-                "title": DOC_TYPE_RU.get(dt, dt),
-                "documents": groups[dt],
-            }
-        )
+    try:
+        for doc in getattr(result, "documents", None) or []:
+            accessible = bool(getattr(doc, "is_accessible", False))
+            confirmed = bool(getattr(doc, "link_confirmed", False))
+            if not accessible and not confirmed:
+                continue
+            dt = getattr(doc, "doc_type", "other") or "other"
+            url = str(getattr(doc, "url", "") or "").strip()
+            key = (dt, url)
+            if key in seen:
+                continue
+            seen.add(key)
+            title = str(getattr(doc, "title", "") or "").strip()
+            out.append(
+                {
+                    "doc_type": dt,
+                    "type_ru": DOC_TYPE_RU.get(dt, dt),
+                    "title": title,
+                    "url": url,
+                    "format": str(getattr(doc, "format", "") or "html"),
+                    "completeness": _doc_completeness(doc),
+                    "has_analysis": getattr(doc, "analysis", None) is not None,
+                    "open_items": _doc_open_items(doc),
+                    "placeholder": bool(getattr(doc, "template_placeholder_detected", False)),
+                    "manual_only": (
+                        confirmed and not accessible
+                    ) or getattr(doc, "analysis", None) is None,
+                }
+            )
+    except Exception:
+        return []
     return out
 
 
@@ -223,6 +392,61 @@ def _core_status_ru() -> Dict[str, str]:
         }
 
 
+def _summary_metrics(result: ScanResult) -> Dict[str, int]:
+    """4 метрики-плитки для сводки. Никогда не бросает."""
+    risk_zones = 0
+    try:
+        for it in getattr(result, "core_checklist", None) or []:
+            if getattr(it, "status", "") == "risk":
+                risk_zones += 1
+    except Exception:
+        risk_zones = 0
+
+    docs_found = 0
+    try:
+        for d in getattr(result, "documents", None) or []:
+            if getattr(d, "is_accessible", False) or getattr(d, "link_confirmed", False):
+                docs_found += 1
+    except Exception:
+        docs_found = 0
+
+    foreign = 0
+    try:
+        for tr in getattr(result, "trackers", None) or []:
+            if getattr(tr, "country_hint", "") == "foreign":
+                foreign += 1
+    except Exception:
+        foreign = 0
+
+    return {
+        "risk_zones": risk_zones,
+        "pages_checked": int(getattr(result, "pages_checked", 0) or 0),
+        "docs_found": docs_found,
+        "foreign_services": foreign,
+    }
+
+
+def _top_risk_cards(top_risks: List[Any], risk_level_ru_map: Dict[str, str]) -> List[Dict[str, str]]:
+    """Компактные карточки top-рисков: title + report_phrase + уровень."""
+    cards: List[Dict[str, str]] = []
+    for risk in top_risks or []:
+        lvl = getattr(risk, "risk_level", "") or ""
+        phrase = (
+            getattr(risk, "report_phrase", "")
+            or getattr(risk, "client_friendly_explanation", "")
+            or ""
+        )
+        cards.append(
+            {
+                "title": str(getattr(risk, "title", "") or ""),
+                "phrase": str(phrase),
+                "level": str(lvl),
+                "level_ru": risk_level_ru_map.get(lvl, lvl),
+            }
+        )
+    return cards
+
+
 def _build_context(result: ScanResult, settings: Any, packages: Optional[dict]) -> Dict[str, Any]:
     risk_level = getattr(result, "risk_level", RiskLevel.unknown.value) or RiskLevel.unknown.value
     try:
@@ -237,6 +461,8 @@ def _build_context(result: ScanResult, settings: Any, packages: Optional[dict]) 
     except Exception:
         top_risks = list(result.risks)[:3]
 
+    liability = _load_liability()
+
     return {
         "result": result,
         "settings": settings,
@@ -245,17 +471,23 @@ def _build_context(result: ScanResult, settings: Any, packages: Optional[dict]) 
         "RISK_LEVEL_RU": RISK_LEVEL_RU,
         "risk_level_ru": risk_level_ru,
         "risk_level_ru_map": risk_level_ru_map,
+        "risk_score_display": _clamp_score(getattr(result, "risk_score", 0)),
+        "industry_ru": _industry_ru(getattr(result, "industry", "")),
         "DOC_TYPE_RU": DOC_TYPE_RU,
         "checklist_status_ru": CHECKLIST_STATUS_RU,
         "core_status_ru": _core_status_ru(),
+        "core_status_dot": CORE_STATUS_DOT,
         "country_hint_ru": COUNTRY_HINT_RU,
         "disclaimer": DISCLAIMER_FULL,
         "disclaimer_short": DISCLAIMER_SHORT,
         "manual_review_note": MANUAL_REVIEW_NOTE,
         "scope_limitations": list(SCOPE_LIMITATIONS),
         "top_risks": top_risks,
+        "top_risk_cards": _top_risk_cards(top_risks, risk_level_ru_map),
+        "metrics": _summary_metrics(result),
+        "liability": liability,
         "generated_at": getattr(result, "created_at", "") or "",
-        "documents_by_type": _group_documents(result),
+        "unique_documents": _unique_documents(result),
         "recommendations": _recommendations(result),
         "logo_data_uri": _logo_data_uri(settings),
         "firm_contact_lines": _firm_contact_lines(settings),
@@ -320,161 +552,139 @@ def _render_plain(ctx: Dict[str, Any]) -> str:
 
     css = ctx.get("inline_css", "")
     a("<!DOCTYPE html><html lang=\"ru\"><head><meta charset=\"utf-8\">")
-    title = "Отчёт о проверке публичной части сайта"
+    title = "Экспресс-анализ рисков по 152-ФЗ"
     if result.company_name:
         title += " — " + result.company_name
     a("<title>" + _e(title) + "</title>")
     a("<style>" + css + "</style>")
     a("</head><body><div class=\"report\">")
 
-    # 1. Обложка
+    level = _e(getattr(result, "risk_level", "") or "unknown")
+    level_ru = _e(ctx.get("risk_level_ru", ""))
+    score_display = _e(ctx.get("risk_score_display", 0))
+
+    # 1. Обложка + вердикт
     a("<section class=\"cover\">")
+    a("<div class=\"cover-brand\">")
     logo = ctx.get("logo_data_uri", "")
     if logo:
         a("<img class=\"logo\" src=\"" + _e(logo) + "\" alt=\"" + _e(getattr(settings, "firm_name", "")) + "\">")
     elif getattr(settings, "firm_name", ""):
         a("<div class=\"firm-name\">" + _e(settings.firm_name) + "</div>")
-    a("<div class=\"report-title\">Отчёт о проверке публичной части сайта</div>")
-    a("<div class=\"report-subtitle\">Экспресс-анализ на признаки риска в области персональных данных</div>")
+    a("</div>")
+    a("<div class=\"cover-title\">Экспресс-анализ рисков по 152-ФЗ</div>")
+    a("<div class=\"cover-subtitle\">Проверка публичной части сайта на признаки риска в области персональных данных</div>")
     a("<div class=\"cover-meta\">")
     if result.company_name:
-        a("<div><span class=\"label\">Организация:</span>" + _e(result.company_name) + "</div>")
-    a("<div><span class=\"label\">Сайт:</span>" + _e(result.site_url) + "</div>")
-    if result.industry:
-        a("<div><span class=\"label\">Отрасль:</span>" + _e(result.industry) + "</div>")
-    a("<div><span class=\"label\">Дата формирования:</span>" + _e(ctx.get("generated_at", "")) + "</div>")
-    a(
-        "<div><span class=\"label\">Итоговый уровень риска:</span> "
-        "<span class=\"badge badge-" + _e(result.risk_level) + "\">" + _e(ctx.get("risk_level_ru", "")) + "</span> "
-        "<span class=\"muted\">(баллы: " + _e(result.risk_score) + "; достоверность: " + _e(result.confidence) + "%)</span></div>"
-    )
+        a("<div><span class=\"label\">Организация</span><span class=\"val\">" + _e(result.company_name) + "</span></div>")
+    a("<div><span class=\"label\">Сайт</span><span class=\"val\">" + _e(result.site_url) + "</span></div>")
+    a("<div><span class=\"label\">Отрасль</span><span class=\"val\">" + _e(ctx.get("industry_ru", "")) + "</span></div>")
+    a("<div><span class=\"label\">Дата</span><span class=\"val\">" + _e(ctx.get("generated_at", "")) + "</span></div>")
     a("</div>")
-    a("<div class=\"disclaimer-box\"><span class=\"disclaimer-title\">Важное уведомление об ограничениях отчёта</span>" + _e(ctx.get("disclaimer", "")) + "</div>")
+    a("<div class=\"verdict verdict-" + level + "\">")
+    a("<div class=\"verdict-col verdict-level\"><div class=\"verdict-cap\">Уровень риска</div><div class=\"verdict-word\">" + level_ru + "</div></div>")
+    a("<div class=\"verdict-col verdict-score\"><div class=\"verdict-cap\">Балл риска</div><div class=\"verdict-num\">" + score_display + " <span class=\"verdict-den\">/ 100</span></div></div>")
+    a("<div class=\"verdict-col verdict-conf\"><div class=\"verdict-cap\">Достоверность</div><div class=\"verdict-num\">" + _e(result.confidence) + "<span class=\"verdict-den\">%</span></div></div>")
+    a("</div>")
+    a("<div class=\"disclaimer-box cover-disclaimer\">" + _e(ctx.get("disclaimer_short", "")) + "</div>")
     a("</section>")
 
-    # 2. Резюме
-    a("<section class=\"section\"><h2>1. Краткое резюме</h2>")
-    a("<div class=\"summary-grid\">")
-    a("<div class=\"summary-cell\"><span class=\"metric-label\">Уровень риска</span><span class=\"metric-value\">" + _e(ctx.get("risk_level_ru", "")) + "</span></div>")
-    a("<div class=\"summary-cell\"><span class=\"metric-label\">Баллы риска</span><span class=\"metric-value\">" + _e(result.risk_score) + "</span></div>")
-    a("<div class=\"summary-cell\"><span class=\"metric-label\">Достоверность</span><span class=\"metric-value\">" + _e(result.confidence) + "%</span></div>")
+    # 2. Сводка: плитки + топ-риски
+    metrics = ctx.get("metrics", {})
+    a("<section class=\"section\"><h2>Сводка</h2>")
+    a("<div class=\"tiles\">")
+    a("<div class=\"tile tile-risk\"><div class=\"tile-num\">" + _e(metrics.get("risk_zones", 0)) + "</div><div class=\"tile-cap\">зон риска</div></div>")
+    a("<div class=\"tile\"><div class=\"tile-num\">" + _e(metrics.get("pages_checked", 0)) + "</div><div class=\"tile-cap\">страниц проверено</div></div>")
+    a("<div class=\"tile\"><div class=\"tile-num\">" + _e(metrics.get("docs_found", 0)) + "</div><div class=\"tile-cap\">документов найдено</div></div>")
+    a("<div class=\"tile\"><div class=\"tile-num\">" + _e(metrics.get("foreign_services", 0)) + "</div><div class=\"tile-cap\">иностранных сервисов</div></div>")
     a("</div>")
+    top_cards = ctx.get("top_risk_cards", [])
+    if top_cards:
+        a("<h3 class=\"sub\">Главные зоны риска</h3><div class=\"top-risks\">")
+        for card in top_cards:
+            clvl = _e(card.get("level", ""))
+            a("<div class=\"top-risk-card level-" + clvl + "\">")
+            a("<div class=\"top-risk-head\"><span class=\"top-risk-title\">" + _e(card.get("title", "")) + "</span>")
+            a("<span class=\"chip chip-" + clvl + "\">" + _e(card.get("level_ru", "")) + "</span></div>")
+            if card.get("phrase"):
+                a("<div class=\"top-risk-phrase\">" + _e(card.get("phrase")) + "</div>")
+            a("</div>")
+        a("</div>")
+    else:
+        a("<p class=\"empty-note\">Значимых зон риска в публичной части сайта автоматически не выявлено.</p>")
     if result.executive_summary:
         a("<div class=\"summary-text\">" + _e(result.executive_summary) + "</div>")
-    else:
-        a("<p class=\"empty-note\">Резюме не сформировано автоматически.</p>")
-    a("<p class=\"muted\">Проверено страниц: " + _e(result.pages_checked) + ". Выявлено зон риска: " + _e(len(result.risks)) + ".</p>")
     a("</section>")
 
-    # 3. Что проверено
-    a("<section class=\"section\"><h2>2. Что проверено</h2><table class=\"data\">")
-    a("<tr><th>Объект проверки</th><th>Результат</th></tr>")
-    a("<tr><td>Публичные страницы</td><td>" + _e(result.pages_checked) + "</td></tr>")
-    a("<tr><td>Формы сбора данных</td><td>" + _e(len(result.forms)) + "</td></tr>")
-    a("<tr><td>Найденные документы</td><td>" + _e(len(result.documents)) + "</td></tr>")
-    a("<tr><td>Сторонние сервисы и трекеры</td><td>" + _e(len(result.trackers)) + "</td></tr>")
-    a("<tr><td>Cookie-баннер</td><td>" + ("обнаружен" if result.cookie_banner_found else "не обнаружен") + "</td></tr>")
-    a("<tr><td>HTTPS</td><td>" + ("используется" if result.technical.https_enabled else "не подтверждён") + "</td></tr>")
-    a("</table></section>")
-
-    # 4. Признаки риска
-    a("<section class=\"section\"><h2>3. Выявленные признаки риска</h2>")
-    risk_map = ctx.get("risk_level_ru_map", {})
-    if result.risks:
-        for risk in result.risks:
-            a("<div class=\"risk-card level-" + _e(risk.risk_level) + "\">")
-            a("<div class=\"risk-head\"><span class=\"risk-title\">" + _e(risk.title) + "</span>")
-            a("<span class=\"badge badge-" + _e(risk.risk_level) + "\">" + _e(risk_map.get(risk.risk_level, risk.risk_level)) + "</span></div>")
-            explanation = risk.client_friendly_explanation or risk.report_phrase
-            if explanation:
-                a("<div class=\"risk-field\">" + _e(explanation) + "</div>")
-            if risk.legal_meaning:
-                a("<div class=\"risk-field\"><span class=\"fld-label\">Юридическое значение: </span>" + _e(risk.legal_meaning) + "</div>")
-            if risk.recommendation:
-                a("<div class=\"risk-field\"><span class=\"fld-label\">Рекомендация: </span>" + _e(risk.recommendation) + "</div>")
-            if risk.evidence and risk.evidence.quote:
-                a("<div class=\"quote\">" + _e(risk.evidence.quote) + "</div>")
-            if risk.evidence and risk.evidence.page_url:
-                a("<div class=\"muted mono\">Источник: " + _e(risk.evidence.page_url) + "</div>")
-            a("</div>")
-    else:
-        a("<p class=\"empty-note\">Значимых признаков риска в публичной части сайта автоматически не выявлено.</p>")
+    # 3. Блок ответственности
+    liability = ctx.get("liability", {}) or {}
+    a("<section class=\"section liability\">")
+    a("<div class=\"liability-header\">Справочно: возможная ответственность</div>")
+    a("<table class=\"liability-table\">")
+    for row in liability.get("items", []) or []:
+        a("<tr><td class=\"liab-label\">" + _e(row.get("label", "")))
+        if row.get("basis"):
+            a("<div class=\"liab-basis\">" + _e(row.get("basis")) + "</div>")
+        a("</td><td class=\"liab-amount\">" + _e(row.get("amount", "")) + "</td></tr>")
+    a("</table>")
+    a("<div class=\"liability-disclaimer\">" + _e(liability.get("disclaimer", "")) + "</div>")
     a("</section>")
 
-    # 5. Формы
-    a("<section class=\"section\"><h2>4. Проверка форм сбора данных</h2>")
-    if result.forms:
-        a("<table class=\"data\"><tr><th>Форма</th><th>Тип</th><th>Категории данных</th><th>Чекбокс согласия</th><th>Ссылка на политику</th></tr>")
-        for form in result.forms:
-            a("<tr><td>" + _e(form.form_type))
-            if form.submit_button_text:
-                a("<br><span class=\"muted\">«" + _e(form.submit_button_text) + "»</span>")
-            a("</td>")
-            a("<td>" + ("сбор ПДн" if form.potentially_personal_data_form else "прочее") + "</td>")
-            a("<td>" + (_e(", ".join(form.personal_data_fields)) if form.personal_data_fields else "—") + "</td>")
-            if form.consent.checkbox_found:
-                cell = "есть" + (" (предотмечен)" if form.consent.checkbox_prechecked else "")
-            elif form.consent.button_acceptance_only:
-                cell = "согласие «нажатием кнопки»"
-            else:
-                cell = "не обнаружен"
-            a("<td>" + cell + "</td>")
-            a("<td>" + ("есть" if form.consent.privacy_link_found else "не обнаружена") + "</td></tr>")
+    # 4. Ядро-чеклист (одна таблица)
+    core_status_ru = ctx.get("core_status_ru", {})
+    core_dot = ctx.get("core_status_dot", {})
+    if getattr(result, "core_checklist", None):
+        a("<section class=\"section\"><h2>Основные проверки</h2>")
+        a("<p class=\"section-lead\">Фиксированный набор ключевых пунктов. Статус «зона риска» означает признак возможного несоответствия и требует подтверждения юристом.</p>")
+        a("<table class=\"core-table\"><tr><th>Проверка</th><th>Статус</th><th>Комментарий</th></tr>")
+        for it in result.core_checklist:
+            dot = _e(core_dot.get(it.status, "na"))
+            a("<tr><td>" + _e(it.label) + "</td>")
+            a("<td class=\"cell-status\"><span class=\"dot dot-" + dot + "\"></span>" + _e(core_status_ru.get(it.status, it.status)) + "</td>")
+            a("<td class=\"cell-comment\">" + _e(it.comment) + "</td></tr>")
         a("</table>")
-        a("<p class=\"muted\">Формы не отправлялись. Оценка механики согласия требует ручной проверки.</p>")
+        if getattr(result, "agent_audit_used", False) and getattr(result, "agent_audit_notes", ""):
+            a("<p class=\"muted\">Агентная перепроверка (LLM-обход сайта): " + _e(result.agent_audit_notes) + "</p>")
+        a("</section>")
+
+    # 5. Документы (краткие карточки, без полного чек-листа)
+    a("<section class=\"section\"><h2>Документы</h2>")
+    unique_docs = ctx.get("unique_documents", [])
+    if unique_docs:
+        a("<div class=\"doc-cards\">")
+        for doc in unique_docs:
+            a("<div class=\"doc-card\"><div class=\"doc-card-head\">")
+            a("<span class=\"doc-card-type\">" + _e(doc.get("type_ru", "")) + "</span>")
+            comp = doc.get("completeness")
+            if comp is not None:
+                a("<span class=\"doc-card-pct\">Полнота " + _e(comp) + "%</span>")
+            a("</div>")
+            if doc.get("url"):
+                a("<div class=\"doc-card-url mono\">" + _e(doc.get("url")) + "</div>")
+            if comp is not None:
+                a("<div class=\"mini-bar\"><div class=\"mini-fill\" style=\"width:" + _e(comp) + "%\"></div></div>")
+            gaps = doc.get("open_items") or []
+            if gaps:
+                a("<div class=\"doc-card-gaps\"><span class=\"gaps-label\">Незакрытые пункты:</span><ul>")
+                for gap in gaps:
+                    a("<li>" + _e(gap) + "</li>")
+                a("</ul></div>")
+            elif doc.get("manual_only"):
+                a("<div class=\"muted\">Документ найден; требует ручной проверки юристом.</div>")
+            if doc.get("placeholder"):
+                a("<div class=\"doc-card-flag\">Обнаружены признаки незаполненного шаблона — требует проверки.</div>")
+            a("</div>")
+        a("</div>")
     else:
-        a("<p class=\"empty-note\">Формы сбора данных в публичной части сайта не обнаружены.</p>")
+        a("<p class=\"empty-note\">Документы по обработке персональных данных в публичной части сайта не обнаружены. Их отсутствие в публичном доступе является признаком риска, требующим проверки.</p>")
     a("</section>")
 
-    # 6. Документы
-    a("<section class=\"section\"><h2>5. Проверка документов</h2>")
-    groups = ctx.get("documents_by_type", [])
-    status_ru = ctx.get("checklist_status_ru", {})
-    if groups:
-        for group in groups:
-            a("<h3>" + _e(group.get("title", "")) + "</h3>")
-            for doc in group.get("documents", []):
-                a("<div class=\"doc-block\"><div class=\"doc-head\"><span>")
-                a(_e(doc.title or group.get("title", "")) + " <span class=\"muted\">(" + _e(doc.format) + ")</span></span>")
-                if doc.analysis:
-                    a("<span class=\"badge badge-status\">Полнота: " + _e(doc.analysis.overall_completeness) + "%</span>")
-                a("</div>")
-                if doc.url:
-                    a("<div class=\"muted mono\">" + _e(doc.url) + "</div>")
-                if doc.analysis:
-                    a("<div class=\"completeness-bar\"><div class=\"completeness-fill\" style=\"width:" + _e(doc.analysis.overall_completeness) + "%\"></div></div>")
-                    if doc.analysis.summary:
-                        a("<p>" + _e(doc.analysis.summary) + "</p>")
-                    if doc.analysis.checklist_results:
-                        a("<table class=\"data\"><tr><th>Пункт</th><th>Статус</th><th>Комментарий / цитата</th></tr>")
-                        for item in doc.analysis.checklist_results:
-                            a("<tr><td>" + _e(item.label) + "</td>")
-                            a("<td class=\"status-" + _e(item.status) + "\">" + _e(status_ru.get(item.status, item.status)) + "</td><td>")
-                            if item.comment:
-                                a(_e(item.comment))
-                            if item.evidence_quote:
-                                a("<div class=\"quote\">" + _e(item.evidence_quote) + "</div>")
-                            a("</td></tr>")
-                        a("</table>")
-                    if doc.analysis.conflicts:
-                        a("<h4>Возможные расхождения</h4><ul>")
-                        for cf in doc.analysis.conflicts:
-                            a("<li>" + _e(cf.comment or cf.type) + "</li>")
-                        a("</ul>")
-                else:
-                    a("<p class=\"muted\">Документ найден; автоматический разбор не выполнен. Требует ручной проверки.</p>")
-                if doc.template_placeholder_detected:
-                    a("<p class=\"status-not_found\">Обнаружены признаки незаполненного шаблона (плейсхолдеры). Требует проверки.</p>")
-                a("</div>")
-    else:
-        a("<p class=\"empty-note\">Документы по обработке персональных данных в публичной части сайта не обнаружены.</p>")
-    a("</section>")
-
-    # 7. Cookie и сторонние сервисы
-    a("<section class=\"section\"><h2>6. Cookie и сторонние сервисы</h2>")
+    # 6. Cookie / трекеры + техника (компактно)
     country_ru = ctx.get("country_hint_ru", {})
+    tech = result.technical
+    a("<section class=\"section\"><h2>Cookie, сторонние сервисы и техника</h2>")
     if result.trackers:
-        a("<table class=\"data\"><tr><th>Сервис</th><th>Категория</th><th>Происхождение</th><th>Уровень риска</th></tr>")
+        a("<table class=\"data\"><tr><th>Сервис</th><th>Категория</th><th>Происхождение</th><th>Риск</th></tr>")
         for tr in result.trackers:
             a("<tr><td>" + _e(tr.provider_name))
             if tr.matched_domain:
@@ -485,26 +695,17 @@ def _render_plain(ctx: Dict[str, Any]) -> str:
         a("</table>")
     else:
         a("<p class=\"empty-note\">Сторонние сервисы и трекеры автоматически не обнаружены.</p>")
-    a("<ul>")
-    a("<li>Cookie-баннер: " + ("обнаружен" if result.cookie_banner_found else "не обнаружен") + ".</li>")
-    a("<li>Признаки установки маркетинговых cookie до согласия: " + ("выявлены (требует проверки)" if result.marketing_cookies_before_consent else "автоматически не выявлены") + ".</li>")
-    a("<li>Зарубежные сторонние сервисы: " + ("присутствуют (требует проверки)" if result.foreign_trackers_found else "автоматически не выявлены") + ".</li>")
-    a("</ul></section>")
-
-    # 8. Техническая проверка
-    tech = result.technical
-    a("<section class=\"section\"><h2>7. Техническая проверка</h2><table class=\"data\">")
+    a("<table class=\"data compact\">")
+    a("<tr><td>Cookie-баннер</td><td>" + ("обнаружен" if result.cookie_banner_found else "не обнаружен") + "</td></tr>")
+    a("<tr><td>Маркетинговые cookie до согласия</td><td>" + ("признаки выявлены (требует проверки)" if result.marketing_cookies_before_consent else "не выявлены") + "</td></tr>")
+    a("<tr><td>Зарубежные сторонние сервисы</td><td>" + ("присутствуют (возможна трансграничная передача)" if result.foreign_trackers_found else "не выявлены") + "</td></tr>")
     a("<tr><td>HTTPS</td><td>" + ("используется" if tech.https_enabled else "не подтверждён") + "</td></tr>")
     a("<tr><td>Переадресация HTTP → HTTPS</td><td>" + ("настроена" if tech.http_to_https_redirect else "не подтверждена") + "</td></tr>")
-    a("<tr><td>Смешанный контент</td><td>" + ("обнаружен (" + _e(len(tech.mixed_content_urls)) + ")" if tech.mixed_content_found else "не обнаружен") + "</td></tr>")
     a("<tr><td>Предполагаемая страна сервера</td><td>" + _e(tech.server_country) + (" (достоверность " + _e(tech.geoip_confidence) + "%)" if tech.geoip_confidence else "") + "</td></tr>")
-    a("<tr><td>CDN</td><td>" + (_e(tech.cdn_detected) if tech.cdn_detected else "не определён") + "</td></tr>")
-    a("<tr><td>robots.txt</td><td>" + ("найден" if tech.robots_txt_found else "не найден") + "</td></tr>")
-    a("<tr><td>sitemap</td><td>" + ("найден" if tech.sitemap_found else "не найден") + "</td></tr>")
     a("</table></section>")
 
-    # 9. Рекомендации
-    a("<section class=\"section\"><h2>8. Что рекомендуется исправить</h2>")
+    # 7. Рекомендации
+    a("<section class=\"section\"><h2>Что рекомендуется исправить</h2>")
     recs = ctx.get("recommendations", {})
     rec_blocks = [
         ("urgent", "Срочно", "rec-priority-urgent"),
@@ -528,8 +729,8 @@ def _render_plain(ctx: Dict[str, Any]) -> str:
         a("<p class=\"empty-note\">Приоритетных рекомендаций по итогам автоматической проверки не сформировано.</p>")
     a("</section>")
 
-    # 10. Коммерческое предложение
-    a("<section class=\"section\"><h2>9. Коммерческое предложение</h2>")
+    # Как мы можем помочь (КП + пакеты)
+    a("<section class=\"section\"><h2>Как мы можем помочь</h2>")
     if result.commercial_offer_text:
         a("<div class=\"offer-text\">" + _e(result.commercial_offer_text) + "</div>")
     packages = ctx.get("packages", [])
@@ -550,23 +751,22 @@ def _render_plain(ctx: Dict[str, Any]) -> str:
                 a("</ul>")
             a("</div>")
     else:
-        a("<p class=\"empty-note\">Состав пакетов услуг уточняется.</p>")
+        a("<p class=\"empty-note\">Состав пакетов услуг уточняется. Свяжитесь с бюро для подготовки предложения.</p>")
     contact_lines = ctx.get("firm_contact_lines", [])
     if contact_lines:
-        a("<div class=\"footer-note\">")
+        a("<div class=\"contact-block\">")
         for line in contact_lines:
             a("<div>" + _e(line) + "</div>")
         a("</div>")
     a("</section>")
 
-    # 11. Ограничения
-    a("<section class=\"section\"><h2>10. Ограничения проверки</h2>")
+    # Ограничения проверки (повтор ограничений)
+    a("<section class=\"section limitations\"><h2>Ограничения проверки</h2>")
     a("<p class=\"section-lead\">Автоматический анализ не заменяет юридическую экспертизу. Система, в частности, не имеет доступа к следующему:</p><ul class=\"scope-list\">")
     for lim in ctx.get("scope_limitations", []):
         a("<li>" + _e(lim) + "</li>")
     a("</ul>")
-    if ctx.get("manual_review_note"):
-        a("<div class=\"disclaimer-box\" style=\"margin-top:14px;\">" + _e(ctx.get("manual_review_note")) + "</div>")
+    a("<div class=\"disclaimer-box\">" + _e(ctx.get("disclaimer", "")) + "</div>")
     a("</section>")
 
     a("<div class=\"footer-note\">" + _e(ctx.get("disclaimer_short", "")) + "</div>")

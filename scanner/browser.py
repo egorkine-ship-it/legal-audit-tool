@@ -384,15 +384,19 @@ class PlaywrightFetcher:
             except Exception:
                 continue
 
-            # Никогда не кликаем submit и «оплатить/купить».
+            # Никогда не кликаем submit и «оплатить/купить/оформить заказ».
             try:
                 el_type = (handle.get_attribute("type") or "").lower()
             except Exception:
                 el_type = ""
             if el_type == "submit":
                 continue
-            low_text = utils.normalize_for_search(text)
-            if any(w in low_text for w in ("оплатить", "оплата", "купить", "заказать и оплатить")):
+            # Единый список «опасных» действий держим в modal_detector, чтобы не
+            # расходился с логикой is_modal_trigger (там он тоже исключается).
+            try:
+                if modal_detector.is_unsafe_click(text):
+                    continue
+            except Exception:
                 continue
 
             # Пропускаем элементы внутри <form>, чтобы не отправить форму.
@@ -441,7 +445,19 @@ class PlaywrightFetcher:
         return modal_htmls
 
     def _capture_modal_html(self, page) -> str:
-        """Найти видимый диалог/модалку и вернуть её outerHTML."""
+        """Найти видимый диалог/модалку (или любой всплывший контейнер с полями)
+        и вернуть её outerHTML.
+
+        Стратегия:
+          1. Идём по известным селекторам модалок/попапов (dialog/.modal/.popup…)
+             и берём первый ВИДИМЫЙ контейнер с непустым outerHTML — но только
+             если в нём есть поля ввода (input/textarea/select). Пустая «шапка»
+             модалки без полей нам не интересна.
+          2. Фолбэк: на JS-сайтах форма нередко рендерится вне .modal (просто
+             появляется видимый блок с полями). Ищем самый «свежий» видимый
+             контейнер с полями ввода, НЕ обёрнутый в существующий <form> с
+             submit'ом мы не трогаем — нам нужен только HTML для анализа.
+        """
         selectors = (
             "[role=dialog]",
             ".modal.show",
@@ -452,28 +468,105 @@ class PlaywrightFetcher:
             ".fancybox-container",
             "[class*='modal']",
             "[class*='popup']",
+            "[class*='overlay']",
+            "[class*='drawer']",
+            "[class*='fancybox']",
+            "[class*='mfp']",
+            "[data-modal]",
         )
         for sel in selectors:
             try:
-                handle = page.query_selector(sel)
+                handles = page.query_selector_all(sel)
             except Exception:
-                handle = None
-            if handle is None:
-                continue
-            try:
-                if not handle.is_visible():
+                handles = None
+            for handle in handles or []:
+                if handle is None:
                     continue
-            except Exception:
-                # Неизвестная видимость (устаревший/откреплённый узел) — считаем
-                # невидимым, чтобы не принять скрытый контейнер за открытую модалку.
-                continue
-            try:
-                html = handle.evaluate("e => e.outerHTML")
-            except Exception:
-                html = ""
-            if html:
-                return html
-        return ""
+                try:
+                    if not handle.is_visible():
+                        continue
+                except Exception:
+                    # Неизвестная видимость (устаревший/откреплённый узел) —
+                    # считаем невидимым, чтобы не принять скрытый контейнер за
+                    # открытую модалку.
+                    continue
+                # Контейнер модалки интересен только если в нём есть поля ввода.
+                try:
+                    has_input = handle.evaluate(
+                        "e => !!e.querySelector('input, textarea, select')"
+                    )
+                except Exception:
+                    has_input = False
+                if not has_input:
+                    continue
+                try:
+                    html = handle.evaluate("e => e.outerHTML")
+                except Exception:
+                    html = ""
+                if html:
+                    return html
+
+        # --- Фолбэк: любой видимый контейнер с полями, всплывший после клика. ---
+        try:
+            return self._capture_visible_input_container(page)
+        except Exception:
+            return ""
+
+    def _capture_visible_input_container(self, page) -> str:
+        """Фолбэк-захват: найти видимый контейнер с полями ввода вне .modal.
+
+        Многие JS-сайты открывают форму заявки/звонка не в .modal, а просто
+        показывают ранее скрытый блок с input'ами. Берём наиболее компактный
+        видимый контейнер (ближайший общий предок полей), чтобы не утащить всю
+        страницу. Возвращает outerHTML или "" — никогда не бросает.
+        """
+        script = """
+        () => {
+          const isVisible = (el) => {
+            if (!el) return false;
+            const st = window.getComputedStyle(el);
+            if (st.display === 'none' || st.visibility === 'hidden') return false;
+            if (parseFloat(st.opacity || '1') === 0) return false;
+            const r = el.getBoundingClientRect();
+            return r.width > 0 && r.height > 0;
+          };
+          // Кандидаты — видимые поля ввода, не скрытые/технические.
+          const inputs = Array.from(
+            document.querySelectorAll('input, textarea, select')
+          ).filter((el) => {
+            const t = (el.getAttribute('type') || '').toLowerCase();
+            if (el.tagName === 'INPUT' &&
+                ['hidden','submit','button','image','reset'].includes(t)) {
+              return false;
+            }
+            return isVisible(el);
+          });
+          if (!inputs.length) return '';
+          // Ищем компактный контейнер, охватывающий поле и кнопку рядом.
+          for (const inp of inputs) {
+            let el = inp;
+            for (let i = 0; i < 6 && el; i++) {
+              el = el.parentElement;
+              if (!el) break;
+              if (!isVisible(el)) continue;
+              const hasBtn = el.querySelector(
+                "button, input[type=submit], input[type=button], [class*=btn], [class*=button]"
+              );
+              const nInputs = el.querySelectorAll('input, textarea, select').length;
+              // Контейнер с полем и кнопкой — вероятная форма/модалка.
+              if (hasBtn && nInputs >= 1) {
+                return el.outerHTML;
+              }
+            }
+          }
+          return '';
+        }
+        """
+        try:
+            html = page.evaluate(script)
+        except Exception:
+            html = ""
+        return html or ""
 
     def _click_close_button(self, page) -> None:
         close_selectors = (

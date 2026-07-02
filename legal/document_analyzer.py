@@ -252,8 +252,12 @@ def detect_conflicts(document: DocumentResult, ctx: ScanContext) -> List[Conflic
                             type="company_conflict",
                             detected_fact="Домен сайта: " + reg_domain,
                             document_statement="Контактный домен в документе: " + em_domain,
-                            risk="high",
-                            comment="Признак риска: реквизиты в документе, возможно, относятся к другой организации/домену — требует проверки.",
+                            # MEDIUM, а не HIGH: несовпадение email-домена часто
+                            # означает лишь другой домен той же организации/группы
+                            # (напр. askona.ru vs askonalife.com — одна компания),
+                            # поэтому это не критический вывод, а повод уточнить юрлицо.
+                            risk="medium",
+                            comment="В политике указан контактный домен другой организации/группы — уточнить юрлицо.",
                         )
                     )
                     break

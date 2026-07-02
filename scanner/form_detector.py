@@ -172,8 +172,8 @@ _NEWSLETTER_KW = [
     "newsletter", "дайджест",
 ]
 _CALLBACK_KW = [
-    "звонок", "перезвон", "callback", "заявк", "обратный звонок",
-    "заказать звонок", "перезвоните", "обратная связь",
+    "звонк", "звонок", "перезвон", "callback", "заявк", "обратный звонок",
+    "заказать звонок", "перезвоните", "обратная связь", "жду звонка",
 ]
 _ORDER_KW = [
     "заказ", "корзин", "оформить", "купить", "оплат", "checkout", "order",
@@ -593,8 +593,53 @@ def _count_controls(el) -> int:
         return 0
 
 
-def _find_heuristic_groups(soup) -> List[Any]:
-    """Найти контейнеры с >=2 полями и кнопкой, не обёрнутые в <form>."""
+def _has_personal_data_control(el) -> bool:
+    """True, если среди полей контейнера есть похожее на сбор ПДн (тел/почта/имя/сообщение).
+
+    Нужно для модалок обратного звонка: там часто всего одно поле «Ваш телефон»
+    (иногда + имя). Такой контейнер уже собирает персональные данные, поэтому
+    даже единственного PD-поля достаточно, чтобы считать группу потенциальной
+    формой сбора ПДн. Никогда не бросает исключение.
+    """
+    try:
+        for c in el.find_all(["input", "textarea", "select"]):
+            tag = (getattr(c, "name", "") or "").lower()
+            itype = _attr(c, "type").strip().lower()
+            if tag == "input" and itype in (
+                "hidden", "submit", "button", "image", "reset"
+            ):
+                continue
+            if tag == "input":
+                field_type = itype or "text"
+            elif tag == "textarea":
+                field_type = "textarea"
+            elif tag == "select":
+                field_type = "select"
+            else:
+                continue
+            fname = _attr(c, "name").strip()
+            placeholder = _attr(c, "placeholder").strip()
+            label = ""
+            try:
+                label = _label_for_control(c, None)
+            except Exception:
+                label = ""
+            category = classify_field(fname, field_type, label, placeholder)
+            if category in PERSONAL_DATA_FIELD_CATEGORIES:
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def _find_heuristic_groups(soup, min_controls: int = 2) -> List[Any]:
+    """Найти контейнеры с полями и кнопкой, не обёрнутые в <form>.
+
+    По умолчанию требуется >=2 полей. Но контейнер с единственным полем сбора
+    ПДн (телефон/почта/имя — типичная модалка обратного звонка) тоже берётся:
+    для него порог понижается до 1. Такой контейнер обязательно должен иметь
+    submit-подобную кнопку. Никогда не бросает исключение.
+    """
     groups: List[Any] = []
     if soup is None:
         return groups
@@ -620,7 +665,14 @@ def _find_heuristic_groups(soup) -> List[Any]:
             # Пропускаем контейнеры, содержащие <form> (форма будет учтена сама).
             if el.find("form") is not None:
                 continue
-            if _count_controls(el) < 2:
+            n_controls = _count_controls(el)
+            if n_controls < 1:
+                continue
+            # Порог по числу полей понижается до 1, если единственное поле —
+            # это сбор ПДн (телефон/почта/имя): типичная модалка обратного
+            # звонка. Иначе требуем не меньше min_controls полей (по умолчанию 2),
+            # чтобы случайный одиночный input (например поиск) не считался формой.
+            if n_controls < min_controls and not _has_personal_data_control(el):
                 continue
             if not _has_submit_like(el):
                 continue
@@ -679,8 +731,14 @@ def detect_forms(
             scopes.extend(soup.find_all("form"))
         except Exception:
             pass
+        # Для модалок понижаем порог по числу полей до 1: содержимое модалки —
+        # это и есть форма (часто одно поле «Ваш телефон» + кнопка), поэтому
+        # даже одиночное поле с кнопкой считаем группой. Для обычного HTML
+        # оставляем порог 2, чтобы одиночный input (например поиск) не путался
+        # с формой; исключение — одиночное поле сбора ПДн (см. _find_heuristic_groups).
         try:
-            scopes.extend(_find_heuristic_groups(soup))
+            min_controls = 1 if (source or "").lower() == "modal" else 2
+            scopes.extend(_find_heuristic_groups(soup, min_controls=min_controls))
         except Exception:
             pass
 
