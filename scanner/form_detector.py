@@ -218,6 +218,72 @@ _OFFER_KW = ["оферт", "пользовательск соглашен", "п�
 
 
 # ---------------------------------------------------------------------------
+# Встраиваемые формы-виджеты (Tilda / Bitrix24 / amoCRM / Envybox / Marquiz /
+# Flexbe / JivoSite и т.п.).
+#
+# На многих RU-сайтах статический HTML не содержит ни <form>, ни <input> —
+# форма отрисовывается скриптом провайдера уже в браузере. Такой сайт всё равно
+# СОБИРАЕТ персональные данные (обычно телефон/имя), поэтому наличие маркера
+# провайдера в разметке — это признак формы сбора ПДн, который нельзя пропустить.
+#
+# Маркеры ищутся регистронезависимо как подстроки в исходном HTML (class/id/
+# data-*/атрибуты/src скриптов). form_type — грубая эвристика по назначению
+# провайдера. Каждый провайдер даёт максимум ОДИН FormResult (dedupe).
+# ---------------------------------------------------------------------------
+_WIDGET_PROVIDERS = [
+    {
+        "key": "tilda",
+        "name": "Tilda",
+        # t396 — движок Tilda Zero Block; tildaForm/t-form — контейнеры форм.
+        "markers": ["t-form", "tildaform", "t396", "tilda"],
+        "form_type": "lead",
+    },
+    {
+        "key": "bitrix24",
+        "name": "Bitrix24",
+        "markers": [
+            "b24-form", "b24-window", "crm-webform", "bitrix/js/crm",
+            "bitrix24",
+        ],
+        "form_type": "lead",
+    },
+    {
+        "key": "amocrm",
+        "name": "amoCRM",
+        "markers": ["amoforms", "amo-forms", "amocrm"],
+        "form_type": "lead",
+    },
+    {
+        "key": "envybox",
+        "name": "Envybox",
+        # "eb-" — короткий и потенциально «жадный» префикс, поэтому он идёт
+        # вместе с более надёжными маркерами; сам по себе он не подставится в
+        # чужие слова, т.к. в HTML это префикс class/id виджета Envybox.
+        "markers": ["envycallback", "envybox", "eb-"],
+        "form_type": "callback",
+    },
+    {
+        "key": "marquiz",
+        "name": "Marquiz",
+        "markers": ["marquiz"],
+        "form_type": "lead",
+    },
+    {
+        "key": "flexbe",
+        "name": "Flexbe",
+        "markers": ["fb-form", "flexbe"],
+        "form_type": "lead",
+    },
+    {
+        "key": "jivosite",
+        "name": "JivoSite",
+        "markers": ["jivosite", "jivo"],
+        "form_type": "other",
+    },
+]
+
+
+# ---------------------------------------------------------------------------
 # bs4-хелперы (guarded).
 # ---------------------------------------------------------------------------
 def _get_soup(html: str):
@@ -707,6 +773,93 @@ def _find_heuristic_groups(soup, min_controls: int = 2) -> List[Any]:
 
 
 # ---------------------------------------------------------------------------
+# Обнаружение встраиваемых форм-виджетов по маркерам провайдера.
+# ---------------------------------------------------------------------------
+def _widget_snippet(html_lower: str, marker: str, raw_html: str) -> str:
+    """Короткий фрагмент HTML вокруг первого вхождения маркера (для evidence)."""
+    try:
+        idx = html_lower.find(marker)
+        if idx < 0:
+            return ""
+        start = max(0, idx - 60)
+        end = min(len(raw_html), idx + len(marker) + 120)
+        return utils.clean_text(raw_html[start:end])
+    except Exception:
+        return ""
+
+
+def detect_form_widgets(html: str, page_url: str = "") -> List[FormResult]:
+    """Найти встраиваемые формы-виджеты по маркерам провайдера в HTML.
+
+    Многие RU-сайты не имеют статического <form>/<input>: форму рисует скрипт
+    провайдера (Tilda, Bitrix24, amoCRM, Envybox, Marquiz, Flexbe, JivoSite).
+    Наличие маркера провайдера в разметке — признак формы сбора ПДн (обычно
+    телефон/имя), поэтому по каждому найденному провайдеру возвращается один
+    FormResult с source="widget" и potentially_personal_data_form=True.
+
+    Регистронезависимо. По одному провайдеру — максимум один результат (dedupe).
+    Никогда не бросает исключение: при любой ошибке возвращает [].
+    """
+    results: List[FormResult] = []
+    if not html:
+        return results
+    try:
+        html_lower = html.lower()
+    except Exception:
+        return results
+
+    for provider in _WIDGET_PROVIDERS:
+        try:
+            matched_marker = ""
+            for marker in provider.get("markers", []):
+                if marker and marker in html_lower:
+                    matched_marker = marker
+                    break
+            if not matched_marker:
+                continue
+
+            provider_name = provider.get("name", "")
+            form_type = provider.get("form_type", "other")
+            key = provider.get("key", provider_name.lower())
+
+            snippet = _widget_snippet(html_lower, matched_marker, html)
+            quote = "Встроенная форма-виджет: {0}".format(provider_name)
+            evidence = _make_evidence(page_url, quote, snippet)
+
+            is_callback = form_type == "callback"
+            is_newsletter = form_type == "newsletter"
+
+            results.append(
+                FormResult(
+                    form_id="widget-{0}".format(key),
+                    page_url=page_url or "",
+                    source="widget",
+                    fields=[],
+                    # Виджеты обратного звонка/лид-формы почти всегда собирают
+                    # телефон и имя — фиксируем как best-effort набор ПДн.
+                    personal_data_fields=["phone", "name"],
+                    submit_button_text="",
+                    form_type=form_type,
+                    is_newsletter=is_newsletter,
+                    is_callback=is_callback,
+                    is_order=False,
+                    is_medical=False,
+                    is_hr=False,
+                    is_children_related=False,
+                    has_file_upload=False,
+                    potentially_personal_data_form=True,
+                    consent=ConsentInfo(),
+                    evidence=evidence,
+                    confidence=55,
+                )
+            )
+        except Exception:
+            continue
+
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Основная функция.
 # ---------------------------------------------------------------------------
 def detect_forms(
@@ -749,6 +902,21 @@ def detect_forms(
                     results.append(fr)
             except Exception:
                 continue
+
+        # Встраиваемые формы-виджеты (Tilda/Bitrix24/amoCRM/…): их не видно как
+        # <form>/<input>, поэтому детектируем отдельно по маркерам провайдера и
+        # домешиваем. Dedupe по form_id, чтобы один и тот же провайдер не дал
+        # дубликат. Реальную разобранную <form> и виджет той же области держим
+        # раздельно (это допустимо: у них разные form_id и source).
+        try:
+            seen_ids = {r.form_id for r in results}
+            for wf in detect_form_widgets(html, page_url):
+                if wf.form_id in seen_ids:
+                    continue
+                seen_ids.add(wf.form_id)
+                results.append(wf)
+        except Exception:
+            pass
     except Exception:
         return results
 

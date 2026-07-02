@@ -275,6 +275,12 @@ _PUBLIC_MAIL_DOMAINS = {
 
 _HIGH_RISKS = {"high", "critical"}
 
+# Максимум символов документа, передаваемых в LLM. Первых 12000 символов
+# достаточно, чтобы найти пункты чек-листа; юридические документы на 50КБ+ лишь
+# впустую жгут токены. ВАЖНО: усечение касается ТОЛЬКО текста для LLM —
+# детерминированная эвристика всегда работает по ПОЛНОМУ document.text.
+_LLM_DOC_CHARS = 12000
+
 
 # ---------------------------------------------------------------------------
 # Выбор чек-листа под тип документа
@@ -523,7 +529,10 @@ def analyze_document(
     if llm_client is not None and getattr(llm_client, "enabled", False) and doc_text:
         try:
             facts = _build_facts(document, ctx)
-            llm_payload = llm_client.analyze_document(doc_text, doc_type, items, facts)
+            # В LLM передаём УСЕЧЁННЫЙ текст (экономия токенов); эвристика уже
+            # отработала по полному document.text выше.
+            llm_doc_text = doc_text[:_LLM_DOC_CHARS]
+            llm_payload = llm_client.analyze_document(llm_doc_text, doc_type, items, facts)
             if llm_payload:
                 results = _merge_llm(results, llm_payload, doc_text)
                 llm_used = True

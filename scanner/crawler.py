@@ -8,6 +8,7 @@
 Публичный API:
     PRIORITY_PATHS: List[str]
     LINK_KEYWORDS: List[str]
+    FORM_PAGE_KEYWORDS: List[str]
     resolve_start_url(raw_url, fetcher, settings) -> Tuple[str, RawPage]
     discover_urls(base_url, raw_home, robots, sitemap_urls, settings) -> List[str]
 
@@ -77,8 +78,32 @@ LINK_KEYWORDS: List[str] = [
     "подписка",
 ]
 
-# Максимум «прочих» внутренних ссылок с главной, добавляемых сверх приоритетных.
-_MAX_OTHER_INTERNAL = 15
+# Ключевые слова страниц с формами/контактами (в URL или тексте ссылки).
+# Только такие «прочие» внутренние ссылки нам интересны: там живут формы
+# записи/заявки/обратной связи, где собираются персональные данные. Каталоги,
+# блоги и карточки товаров не собирают ПДн и в целевой сбор не попадают.
+FORM_PAGE_KEYWORDS: List[str] = [
+    "контакт",
+    "contact",
+    "kontakty",
+    "запис",
+    "заявк",
+    "консультац",
+    "услуг",
+    "service",
+    "обратная связь",
+    "feedback",
+    "звонок",
+    "callback",
+    "подписк",
+    "бронир",
+    "заказать",
+]
+
+# Максимум страниц с формами/контактами, добавляемых сверх документных ссылок.
+# Раньше здесь брались до 15 ЛЮБЫХ внутренних ссылок — теперь берём только
+# релевантные формам/контактам и ограничиваем их числом.
+_MAX_FORM_PAGES = 4
 # Максимум ДОГАДОК по типовым путям (/privacy, /oferta, ...). Они добавляются
 # ПОСЛЕДНИМИ и только чтобы добить бюджет, если реальных ссылок мало — иначе
 # 404-догадки съедают весь лимит и до реальных документов дело не доходит.
@@ -268,11 +293,14 @@ def discover_urls(
     """
     Построить упорядоченный дедуплицированный список URL для проверки.
 
-    Порядок (СНАЧАЛА реальные ссылки сайта, догадки — в конце):
+    Целевой сбор (качество сохраняем, лишнее — не обходим):
       1) внутренние ссылки главной (footer/меню), у которых ключевое слово есть
          в URL ИЛИ в тексте ссылки — это реальные документы/страницы сайта;
       2) sitemap_urls с ключевыми словами;
-      3) до ~15 прочих внутренних HTML-ссылок главной (могут содержать формы);
+      3) до _MAX_FORM_PAGES страниц с формами/контактами — только те прочие
+         внутренние ссылки, чей URL ИЛИ текст совпал с FORM_PAGE_KEYWORDS
+         (контакты/запись/заявка/услуги и т.п.). Каталог/блог/карточки товаров
+         больше не обходим — там нет сбора персональных данных;
       4) ДОГАДКИ по типовым путям (/privacy, /oferta, ...) — только чтобы добить
          бюджет, не более _MAX_GUESS_PATHS, чтобы 404-догадки не съедали лимит.
 
@@ -317,9 +345,10 @@ def discover_urls(
         seen.add(clean)
         ordered.append(clean)
 
-    # Реальные ссылки главной (с текстом), разложенные на «документные» и прочие.
+    # Реальные ссылки главной (с текстом), разложенные на «документные» и
+    # «страницы форм/контактов». Прочие (каталог/блог/товары) не собираем.
     doc_links: List[str] = []
-    other_links: List[str] = []
+    form_links: List[str] = []
     for abs_url, text in _homepage_anchors(raw_home, base):
         try:
             if base and not utils.same_registered_domain(abs_url, base):
@@ -346,7 +375,17 @@ def discover_urls(
             has_kw = text_kw or utils.contains_any(blob, LINK_KEYWORDS)
         except Exception:
             has_kw = text_kw
-        (doc_links if has_kw else other_links).append(abs_url)
+        if has_kw:
+            doc_links.append(abs_url)
+            continue
+        # Не документ — берём ссылку только если она про форму/контакты
+        # (URL или текст совпал с FORM_PAGE_KEYWORDS). Иначе пропускаем.
+        try:
+            form_kw = utils.contains_any(blob, FORM_PAGE_KEYWORDS)
+        except Exception:
+            form_kw = False
+        if form_kw:
+            form_links.append(abs_url)
 
     # (1) Реальные «документные» ссылки — в первую очередь.
     for link in doc_links:
@@ -367,15 +406,15 @@ def discover_urls(
             continue
         _add(url)
 
-    # (3) До ~15 прочих внутренних HTML-ссылок (могут содержать формы).
-    added_other = 0
-    for link in other_links:
-        if added_other >= _MAX_OTHER_INTERNAL:
+    # (3) До _MAX_FORM_PAGES страниц с формами/контактами (целевой сбор).
+    added_forms = 0
+    for link in form_links:
+        if added_forms >= _MAX_FORM_PAGES:
             break
         before = len(ordered)
         _add(link)
         if len(ordered) > before:
-            added_other += 1
+            added_forms += 1
 
     # (4) ДОГАДКИ по типовым путям — последними и с лимитом.
     if base:

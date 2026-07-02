@@ -77,7 +77,10 @@ class Settings(BaseModel):
     database_url: str = ""             # postgresql://... ; пусто -> SQLite (db_path)
 
     # --- Сканирование ---
-    max_pages: int = 20
+    # Предохранительный лимит целевого сбора: главная + документы + до ~4
+    # страниц форм/контактов + немного догадок. Env MAX_PAGES_DEFAULT/MAX_PAGES
+    # по-прежнему переопределяет значение через _defaults_from_env().
+    max_pages: int = 10
     page_timeout_ms: int = 20000
     delay_between_pages_s: float = 1.0
     request_timeout_s: int = 20

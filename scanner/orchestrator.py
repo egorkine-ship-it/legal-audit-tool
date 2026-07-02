@@ -268,19 +268,39 @@ def run_scan(
                 )
             documents.append(doc)
         documents = _dedupe_documents(documents)
+        # Отсекаем документы чужого домена (партнёрские/сторонние ссылки) — это
+        # не документы проверяемого сайта (иначе в отчёт попадает чужой бренд).
+        try:
+            documents = document_finder.filter_relevant_documents(documents, base_url)
+        except Exception:
+            pass
         result.documents = documents
 
         # --- Агентная перепроверка (LLM-агент обходит сайт через браузер) ---
         # Третий пояс защиты: агент смотрит подвал/разделы сайта и сообщает,
         # какие документы мы могли пропустить. ВСЁ, что он назовёт, заземляется:
         # реально скачивается и проходит тот же конвейер (галлюцинации отсеются).
+        #
+        # АДАПТИВНО: агент дорогой (токены/время), поэтому запускаем его ТОЛЬКО
+        # когда мы сами НЕ нашли ключевые документы — если политика и ещё один
+        # документ уже найдены, обход пропускаем (экономия ~в разы).
+        present_types = set()
+        try:
+            for _d in documents:
+                if document_finder.document_is_present(_d):
+                    present_types.add(_d.doc_type)
+        except Exception:
+            present_types = set()
+        needs_agent = ("privacy_policy" not in present_types) or (len(present_types) < 2)
+
         if (
             scan_input.use_llm
             and getattr(scan_input, "use_agent", False)
             and settings.enable_llm
+            and needs_agent
             and not _stopped()
         ):
-            _emit(progress_cb, "Агентная перепроверка: LLM-агент обходит сайт…")
+            _emit(progress_cb, "Агентная перепроверка: LLM-агент обходит сайт (не все документы найдены)…")
             audit: Dict = {}
             try:
                 from llm import site_agent
@@ -365,26 +385,38 @@ def run_scan(
         _emit(progress_cb, "Анализ документов по чек-листам…")
         client = llm_client.get_client(settings) if (settings.enable_llm and scan_input.use_llm) else None
         analyses: List[DocumentAnalysis] = []
-        for doc in documents:
-            if _stopped():
-                result.errors.append("Анализ документов остановлен пользователем.")
-                break
+
+        def _analyze_one(doc: DocumentResult) -> DocumentAnalysis:
             try:
-                analysis = document_analyzer.analyze_document(
+                return document_analyzer.analyze_document(
                     doc, doc.doc_type, context, settings, checklists, client
                 )
             except Exception as exc:
-                analysis = DocumentAnalysis(
+                return DocumentAnalysis(
                     document_type=doc.doc_type,
                     document_url=doc.url,
                     summary=f"Ошибка анализа: {exc}",
                     requires_manual_review=True,
                 )
-                result.errors.append(f"analyze_document {doc.doc_type}: {exc}")
-            doc.analysis = analysis
-            analyses.append(analysis)
-            if analysis.llm_used:
-                result.llm_used = True
+
+        if _stopped():
+            result.errors.append("Анализ документов остановлен пользователем.")
+        elif documents:
+            # Документы независимы, а LLM-вызов — это сетевое ожидание, поэтому
+            # разбираем их ПАРАЛЛЕЛЬНО (в разы быстрее при включённом LLM).
+            workers = min(4, len(documents))
+            if workers > 1:
+                from concurrent.futures import ThreadPoolExecutor
+
+                with ThreadPoolExecutor(max_workers=workers) as ex:
+                    computed = list(ex.map(_analyze_one, documents))
+            else:
+                computed = [_analyze_one(documents[0])]
+            for doc, analysis in zip(documents, computed):
+                doc.analysis = analysis
+                analyses.append(analysis)
+                if getattr(analysis, "llm_used", False):
+                    result.llm_used = True
         result.document_checklists = analyses
 
         # Обновляем флаги наличия документов в контексте после разбора.
@@ -406,6 +438,23 @@ def run_scan(
             result.confidence = risk_scoring.compute_confidence(result)
         except Exception as exc:
             result.errors.append(f"risk_scoring: {exc}")
+
+        # Автопометка низкой достоверности: если доказательств мало (сайт мог не
+        # прогрузиться, документы без извлечённого текста) — явно подчёркиваем,
+        # что вывод предварительный и нужна ручная проверка.
+        try:
+            if int(result.confidence or 0) < 50:
+                result.requires_manual_review = True
+                note = (
+                    "Низкая достоверность результата — доказательств мало "
+                    "(сайт мог не прогрузиться полностью или документы без "
+                    "извлечённого текста). Вывод предварительный, обязательна "
+                    "ручная проверка юристом."
+                )
+                if note not in result.errors:
+                    result.errors.append(note)
+        except Exception:
+            pass
 
         # --- Ядро-чеклист: ~20 надёжно проверяемых пунктов ---
         try:

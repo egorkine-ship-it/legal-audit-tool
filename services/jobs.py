@@ -40,10 +40,14 @@ MAX_JOBS = 30            # максимум задач в памяти
 MAX_PROGRESS_LINES = 200  # хвост прогресса на задачу
 
 # Статусы задач.
+STATUS_QUEUED = "queued"    # принята, ждёт свободного слота
 STATUS_RUNNING = "running"
 STATUS_DONE = "done"
 STATUS_ERROR = "error"
 STATUS_STOPPED = "stopped"
+
+# Завершённые (терминальные) статусы — задача больше не займёт слот.
+_TERMINAL_STATUSES = (STATUS_DONE, STATUS_ERROR, STATUS_STOPPED)
 
 
 class Job:
@@ -53,7 +57,8 @@ class Job:
         self.job_id = job_id
         self.site_url = site_url
         self.company_name = company_name
-        self.status = STATUS_RUNNING
+        # Задача рождается в очереди; воркер стартует только при свободном слоте.
+        self.status = STATUS_QUEUED
         self.progress: List[str] = []
         self.created_at = datetime.now().isoformat(timespec="seconds")
         self.finished_at = ""
@@ -78,15 +83,32 @@ class Job:
 
 
 class JobManager:
-    """Process-global реестр фоновых проверок."""
+    """Process-global реестр фоновых проверок.
+
+    Ограничение параллелизма: Chromium тяжёлый, несколько одновременных
+    проверок «голодят» контейнер (риск 502). Поэтому одновременно выполняется
+    не более ``_MAX_CONCURRENT`` задач; остальные ждут в статусе ``queued`` и
+    стартуют по FIFO, как только освобождается слот.
+    """
+
+    # Максимум одновременно выполняющихся проверок (по умолчанию 1).
+    _MAX_CONCURRENT = 1
 
     _instance: Optional["JobManager"] = None
     _instance_lock = threading.Lock()
 
-    def __init__(self) -> None:
+    def __init__(self, max_concurrent: Optional[int] = None) -> None:
         self._lock = threading.Lock()
-        # dict сохраняет порядок вставки (порядок отправки задач).
+        # dict сохраняет порядок вставки (порядок отправки задач == FIFO очередь).
         self._jobs: "dict[str, Job]" = {}
+        # Входные данные ещё не стартовавших задач: job_id -> (scan_input, settings).
+        self._pending: "dict[str, tuple]" = {}
+        # Предел параллелизма экземпляра (>=1). По умолчанию — класс-атрибут.
+        try:
+            limit = int(max_concurrent) if max_concurrent is not None else int(self._MAX_CONCURRENT)
+        except Exception:
+            limit = 1
+        self.max_concurrent = limit if limit >= 1 else 1
 
     @classmethod
     def instance(cls) -> "JobManager":
@@ -100,7 +122,12 @@ class JobManager:
     # Публичный API
     # ------------------------------------------------------------------
     def submit(self, scan_input, settings) -> str:
-        """Запустить проверку в фоне. Вернуть job_id (никогда не бросает)."""
+        """Принять проверку в фон. Вернуть job_id сразу (никогда не бросает).
+
+        Задача регистрируется в статусе ``queued`` и стартует немедленно, если
+        есть свободный слот; иначе ждёт освобождения (FIFO). Метод не блокирует
+        вызывающего в любом случае.
+        """
         job_id = uuid.uuid4().hex[:8]
         try:
             job = Job(
@@ -110,17 +137,15 @@ class JobManager:
             )
             with self._lock:
                 self._jobs[job_id] = job
+                # Запоминаем вход задачи для отложенного старта из очереди.
+                self._pending[job_id] = (scan_input, settings)
                 self._prune_locked()
-            thread = threading.Thread(
-                target=self._run_job,
-                args=(job, scan_input, settings),
-                name="scan-job-{}".format(job_id),
-                daemon=True,
-            )
-            thread.start()
+            # Пытаемся занять свободные слоты (в т.ч. этой задачей).
+            self._launch_queued()
         except Exception as exc:  # предохранитель: задача остаётся с ошибкой
             try:
                 with self._lock:
+                    self._pending.pop(job_id, None)
                     job = self._jobs.get(job_id)
                     if job is not None:
                         job.status = STATUS_ERROR
@@ -164,19 +189,83 @@ class JobManager:
         except Exception:
             return False
 
+    def has_queued(self) -> bool:
+        """Есть ли задачи, ждущие свободного слота (статус ``queued``)."""
+        try:
+            with self._lock:
+                return any(j.status == STATUS_QUEUED for j in self._jobs.values())
+        except Exception:
+            return False
+
     # ------------------------------------------------------------------
     # Внутреннее
     # ------------------------------------------------------------------
+    def _launch_queued(self) -> None:
+        """Занять свободные слоты очередными задачами (FIFO). Никогда не бросает.
+
+        Пока число выполняющихся задач меньше предела, берём самую раннюю
+        (по порядку отправки) ``queued``-задачу, помечаем её ``running`` и
+        запускаем daemon-поток. Всё под локом, кроме собственно старта потока.
+        """
+        try:
+            while True:
+                to_start = None  # (job, scan_input, settings)
+                with self._lock:
+                    running = sum(
+                        1 for j in self._jobs.values() if j.status == STATUS_RUNNING
+                    )
+                    if running >= self.max_concurrent:
+                        break
+                    # Порядок вставки в dict == FIFO очередь отправки.
+                    for job in self._jobs.values():
+                        if job.status == STATUS_QUEUED:
+                            scan_input, settings = self._pending.pop(
+                                job.job_id, (None, None)
+                            )
+                            job.status = STATUS_RUNNING
+                            to_start = (job, scan_input, settings)
+                            break
+                    if to_start is None:
+                        break
+                # Старт потока — вне лока (создание потока не должно держать лок).
+                job, scan_input, settings = to_start
+                try:
+                    thread = threading.Thread(
+                        target=self._run_job,
+                        args=(job, scan_input, settings),
+                        daemon=True,
+                    )
+                    thread.start()
+                except Exception as exc:
+                    # Поток не создался — задача не «повисает» в running.
+                    try:
+                        with self._lock:
+                            job.error = str(exc)
+                            job.status = STATUS_ERROR
+                            job.finished_at = datetime.now().isoformat(timespec="seconds")
+                    except Exception:
+                        pass
+                    # Слот освободился (running-счётчик снизился) — пробуем дальше.
+        except Exception:
+            pass
+
     def _prune_locked(self) -> None:
-        """Удалить старейшие ЗАВЕРШЁННЫЕ задачи сверх лимита (лок уже взят)."""
+        """Удалить старейшие ЗАВЕРШЁННЫЕ задачи сверх лимита (лок уже взят).
+
+        Вытесняем только терминальные (done/error/stopped): выполняющиеся и
+        ждущие в очереди задачи трогать нельзя, иначе потеряется ход проверки.
+        """
         try:
             overflow = len(self._jobs) - MAX_JOBS
             if overflow <= 0:
                 return
-            for jid in [j.job_id for j in self._jobs.values() if j.status != STATUS_RUNNING]:
+            for jid in [
+                j.job_id for j in self._jobs.values() if j.status in _TERMINAL_STATUSES
+            ]:
                 if overflow <= 0:
                     break
                 self._jobs.pop(jid, None)
+                self._pending.pop(jid, None)  # на всякий случай (у терминальных нет)
                 overflow -= 1
         except Exception:
             pass
@@ -221,3 +310,5 @@ class JobManager:
             job.status = STATUS_STOPPED if job.stop_requested else STATUS_ERROR
         finally:
             job.finished_at = datetime.now().isoformat(timespec="seconds")
+            # Слот освободился — запускаем следующую задачу из очереди (FIFO).
+            self._launch_queued()
