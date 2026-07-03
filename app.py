@@ -10,8 +10,10 @@
 """
 from __future__ import annotations
 
+import base64
 import io
 import json
+import html as html_lib
 import time
 import zipfile
 from datetime import datetime
@@ -36,27 +38,585 @@ from scanner.models import (
 from scanner.orchestrator import run_scan
 from services.jobs import JobManager
 
+APP_DIR = Path(__file__).resolve().parent
+APP_LOGO_PATH = APP_DIR / "assets" / "nexora_logo_app.jpg"
+
 st.set_page_config(
-    page_title="Экспресс-аудит сайтов · 152-ФЗ",
-    page_icon="🛡️",
+    page_title="Nexora Legal · Compliance Scanner",
+    page_icon=str(APP_LOGO_PATH) if APP_LOGO_PATH.exists() else "NL",
     layout="wide",
 )
 
 RISK_EMOJI = {
-    RiskLevel.unknown.value: "⚪️",
-    RiskLevel.low.value: "🟢",
-    RiskLevel.medium.value: "🟡",
-    RiskLevel.high.value: "🟠",
-    RiskLevel.critical.value: "🔴",
+    RiskLevel.unknown.value: "•",
+    RiskLevel.low.value: "•",
+    RiskLevel.medium.value: "•",
+    RiskLevel.high.value: "•",
+    RiskLevel.critical.value: "•",
 }
 
-# Эмодзи статусов пунктов ядро-чеклиста.
+# Короткие текстовые маркеры статусов пунктов ядро-чеклиста.
 CORE_STATUS_EMOJI = {
-    "ok": "✅",
-    "risk": "🔴",
-    "unclear": "🟡",
-    "not_applicable": "⚪",
+    "ok": "OK",
+    "risk": "!",
+    "unclear": "?",
+    "not_applicable": "-",
 }
+
+RISK_LEVEL_CLASS = {
+    RiskLevel.unknown.value: "muted",
+    RiskLevel.low.value: "low",
+    RiskLevel.medium.value: "medium",
+    RiskLevel.high.value: "high",
+    RiskLevel.critical.value: "critical",
+}
+
+
+# ---------------------------------------------------------------------------
+# Визуальная система приложения
+# ---------------------------------------------------------------------------
+def _escape(value) -> str:
+    """HTML-escape для любых пользовательских/сканированных значений."""
+    if value is None:
+        return ""
+    return html_lib.escape(str(value), quote=True)
+
+
+def _asset_data_uri(path: Path) -> str:
+    """Вернуть data URI для небольшого локального изображения. Никогда не бросает."""
+    try:
+        if not path.exists() or not path.is_file():
+            return ""
+        data = path.read_bytes()
+        if not data:
+            return ""
+        ext = path.suffix.lower().lstrip(".") or "jpeg"
+        mime = "image/png" if ext == "png" else "image/jpeg"
+        return "data:{};base64,{}".format(mime, base64.b64encode(data).decode("ascii"))
+    except Exception:
+        return ""
+
+
+def _logo_data_uri(settings: Optional[Settings] = None) -> str:
+    """Логотип приложения: сначала logo_path из настроек, затем bundled Nexora."""
+    custom = ""
+    try:
+        custom = getattr(settings, "logo_path", "") or ""
+    except Exception:
+        custom = ""
+    if custom:
+        uri = _asset_data_uri(Path(custom))
+        if uri:
+            return uri
+    return _asset_data_uri(APP_LOGO_PATH)
+
+
+def _inject_design_system() -> None:
+    """Единая визуальная система Streamlit UI: цвета, карточки, кнопки, таблицы."""
+    st.markdown(
+        """
+<style>
+    :root {
+        --app-bg: #f5f5f7;
+        --surface: rgba(255,255,255,0.82);
+        --surface-2: rgba(255,255,255,0.56);
+        --border: rgba(0,0,0,0.10);
+        --border-soft: rgba(0,0,0,0.075);
+        --ink: #1d1d1f;
+        --muted: #6e6e73;
+        --navy: #12355b;
+        --navy-2: #2f6db3;
+        --blue-soft: #eaf2ff;
+        --green: #138a5b;
+        --green-soft: #e8f7ef;
+        --yellow: #a16207;
+        --yellow-soft: #fff7db;
+        --orange: #c05621;
+        --orange-soft: #fff1e7;
+        --red: #bf2f38;
+        --red-soft: #fff0f1;
+        --shadow: 0 20px 60px rgba(0, 0, 0, 0.075);
+        --radius: 10px;
+    }
+
+    .stApp {
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", Inter, Arial, sans-serif;
+        background:
+            radial-gradient(circle at 18% -8%, rgba(0, 113, 227, 0.10), transparent 28rem),
+            radial-gradient(circle at 92% 8%, rgba(18, 53, 91, 0.08), transparent 24rem),
+            linear-gradient(180deg, #fbfbfd 0%, var(--app-bg) 46%, #f2f2f5 100%);
+        color: var(--ink);
+    }
+
+    header[data-testid="stHeader"] {
+        background: rgba(251, 251, 253, 0.72);
+        backdrop-filter: saturate(180%) blur(20px);
+        border-bottom: 1px solid rgba(0,0,0,0.06);
+    }
+
+    .block-container {
+        padding-top: 1.25rem;
+        padding-bottom: 3rem;
+        max-width: 1380px;
+    }
+
+    section[data-testid="stSidebar"] {
+        background: rgba(255,255,255,0.64);
+        backdrop-filter: saturate(180%) blur(22px);
+        border-right: 1px solid rgba(0,0,0,0.075);
+    }
+
+    section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"],
+    section[data-testid="stSidebar"] label,
+    section[data-testid="stSidebar"] p,
+    section[data-testid="stSidebar"] span {
+        color: var(--ink) !important;
+    }
+
+    section[data-testid="stSidebar"] .stButton > button {
+        background: rgba(255,255,255,0.72);
+        border-color: rgba(0,0,0,0.08);
+        color: var(--ink);
+    }
+
+    section[data-testid="stSidebar"] div[role="radiogroup"] label {
+        min-height: 2.45rem;
+        padding: 0.38rem 0.55rem;
+        border-radius: var(--radius);
+        border: 1px solid transparent;
+        transition: background .16s ease, border-color .16s ease, transform .16s ease;
+    }
+
+    section[data-testid="stSidebar"] div[role="radiogroup"] label:hover {
+        background: rgba(255,255,255,0.86);
+        border-color: rgba(0,0,0,0.08);
+        transform: translateX(1px);
+    }
+
+    h1, h2, h3 {
+        letter-spacing: 0;
+    }
+
+    div[data-testid="stForm"],
+    div[data-testid="stExpander"],
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+        border-color: var(--border-soft) !important;
+        border-radius: var(--radius) !important;
+        background: rgba(255,255,255,0.74);
+        backdrop-filter: saturate(160%) blur(18px);
+        box-shadow: 0 14px 38px rgba(0,0,0,0.045);
+    }
+
+    .stTextInput input,
+    .stTextArea textarea,
+    .stNumberInput input,
+    .stSelectbox [data-baseweb="select"],
+    .stFileUploader section {
+        border-radius: var(--radius) !important;
+    }
+
+    .stButton > button,
+    .stDownloadButton > button,
+    button[kind="primary"] {
+        border-radius: var(--radius) !important;
+        min-height: 2.65rem;
+        font-weight: 650;
+        letter-spacing: 0;
+        transition: transform .13s ease, box-shadow .13s ease, border-color .13s ease;
+    }
+
+    .stButton > button:hover,
+    .stDownloadButton > button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 12px 24px rgba(0, 0, 0, 0.11);
+    }
+
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(180deg, #2c2c2e 0%, #111113 100%);
+        border: 1px solid rgba(0,0,0,0.22);
+    }
+
+    [data-testid="stDataFrame"] {
+        border: 1px solid var(--border-soft);
+        border-radius: var(--radius);
+        overflow: hidden;
+        background: rgba(255,255,255,0.78);
+        backdrop-filter: saturate(160%) blur(18px);
+        box-shadow: 0 14px 38px rgba(0,0,0,0.045);
+    }
+
+    div[data-testid="stAlert"] {
+        border-radius: var(--radius);
+        border: 1px solid var(--border-soft);
+    }
+
+    .app-pagehead {
+        padding: 1.2rem 1.25rem;
+        margin: 0 0 1.1rem 0;
+        background: rgba(255,255,255,0.74);
+        backdrop-filter: saturate(180%) blur(22px);
+        color: var(--ink);
+        border: 1px solid rgba(0,0,0,0.075);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+    }
+
+    .app-kicker {
+        color: #0071e3;
+        font-size: .78rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: .08em;
+        margin-bottom: .35rem;
+    }
+
+    .app-title {
+        font-size: clamp(1.45rem, 2.2vw, 2.05rem);
+        font-weight: 760;
+        line-height: 1.15;
+        margin: 0;
+    }
+
+    .app-subtitle {
+        color: var(--muted);
+        max-width: 860px;
+        margin-top: .42rem;
+        font-size: .98rem;
+        line-height: 1.45;
+    }
+
+    .metric-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: .85rem;
+        margin: .25rem 0 1.1rem 0;
+    }
+
+    .metric-card {
+        background: rgba(255,255,255,0.78);
+        backdrop-filter: saturate(160%) blur(18px);
+        border: 1px solid var(--border-soft);
+        border-radius: var(--radius);
+        padding: 1rem;
+        box-shadow: 0 14px 38px rgba(0,0,0,0.045);
+        min-height: 7rem;
+    }
+
+    .metric-label {
+        color: var(--muted);
+        font-size: .78rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        margin-bottom: .55rem;
+    }
+
+    .metric-value {
+        color: var(--ink);
+        font-size: clamp(1.45rem, 2vw, 2rem);
+        font-weight: 760;
+        line-height: 1.05;
+        word-break: break-word;
+    }
+
+    .metric-note {
+        color: var(--muted);
+        font-size: .84rem;
+        margin-top: .5rem;
+        line-height: 1.35;
+    }
+
+    .metric-card.low { border-left: 4px solid var(--green); }
+    .metric-card.medium { border-left: 4px solid #d6a400; }
+    .metric-card.high { border-left: 4px solid var(--orange); }
+    .metric-card.critical { border-left: 4px solid var(--red); }
+    .metric-card.muted { border-left: 4px solid #94a3b8; }
+
+    .risk-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: .42rem;
+        padding: .32rem .58rem;
+        border-radius: 999px;
+        font-size: .82rem;
+        font-weight: 760;
+        border: 1px solid transparent;
+        white-space: nowrap;
+    }
+
+    .risk-pill.low { color: var(--green); background: var(--green-soft); border-color: #bfe8d1; }
+    .risk-pill.medium { color: var(--yellow); background: var(--yellow-soft); border-color: #f5df91; }
+    .risk-pill.high { color: var(--orange); background: var(--orange-soft); border-color: #ffd2b6; }
+    .risk-pill.critical { color: var(--red); background: var(--red-soft); border-color: #ffc8ce; }
+    .risk-pill.muted { color: #64748b; background: #f1f5f9; border-color: #dbe3ee; }
+
+    .risk-dot {
+        width: .52rem;
+        height: .52rem;
+        border-radius: 99px;
+        background: currentColor;
+        display: inline-block;
+    }
+
+    .soft-panel {
+        background: rgba(255,255,255,0.78);
+        backdrop-filter: saturate(160%) blur(18px);
+        border: 1px solid var(--border-soft);
+        border-radius: var(--radius);
+        padding: 1rem 1.1rem;
+        box-shadow: 0 14px 38px rgba(0,0,0,0.045);
+        margin: .25rem 0 1rem 0;
+    }
+
+    .section-label {
+        color: var(--muted);
+        font-size: .76rem;
+        font-weight: 750;
+        letter-spacing: .08em;
+        text-transform: uppercase;
+        margin-bottom: .2rem;
+    }
+
+    .section-title {
+        color: var(--ink);
+        font-weight: 760;
+        font-size: 1.08rem;
+        margin-bottom: .35rem;
+    }
+
+    .muted-copy {
+        color: var(--muted);
+        font-size: .92rem;
+        line-height: 1.45;
+    }
+
+    .job-card {
+        background: rgba(255,255,255,0.78);
+        backdrop-filter: saturate(160%) blur(18px);
+        border: 1px solid var(--border-soft);
+        border-radius: var(--radius);
+        padding: .95rem 1rem;
+        box-shadow: 0 12px 32px rgba(0,0,0,0.045);
+        margin-bottom: .75rem;
+    }
+
+    .job-title {
+        color: var(--ink);
+        font-weight: 760;
+        margin-bottom: .25rem;
+    }
+
+    .job-meta {
+        color: var(--muted);
+        font-size: .88rem;
+        line-height: 1.35;
+    }
+
+    .login-shell {
+        max-width: 980px;
+        margin: 5vh auto 1.5rem auto;
+        display: grid;
+        grid-template-columns: 1.1fr .9fr;
+        gap: 1rem;
+        align-items: stretch;
+    }
+
+    .login-brand {
+        background:
+            radial-gradient(circle at 12% 8%, rgba(0,113,227,0.14), transparent 18rem),
+            linear-gradient(180deg, rgba(255,255,255,0.92) 0%, rgba(255,255,255,0.72) 100%);
+        backdrop-filter: saturate(180%) blur(22px);
+        border: 1px solid rgba(0,0,0,0.075);
+        border-radius: var(--radius);
+        padding: 1.35rem;
+        color: var(--ink);
+        box-shadow: var(--shadow);
+        min-height: 18rem;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+    }
+
+    .brand-lockup {
+        display: inline-flex;
+        align-items: center;
+        gap: .72rem;
+        padding: .52rem .68rem;
+        background: rgba(255,255,255,0.98);
+        border-radius: var(--radius);
+        border: 1px solid rgba(0,0,0,0.065);
+        box-shadow: 0 10px 30px rgba(0,0,0,0.05);
+        width: fit-content;
+        max-width: 100%;
+    }
+
+    .brand-lockup img {
+        width: 9.5rem;
+        height: auto;
+        display: block;
+    }
+
+    .brand-lockup span {
+        color: #253047;
+        font-size: .72rem;
+        font-weight: 760;
+        letter-spacing: .08em;
+        text-transform: uppercase;
+        border-left: 1px solid #d6dde8;
+        padding-left: .72rem;
+        white-space: nowrap;
+    }
+
+    .sidebar-brand {
+        background: rgba(255,255,255,0.98);
+        border-radius: var(--radius);
+        padding: .68rem;
+        margin: .1rem 0 .65rem 0;
+        border: 1px solid rgba(0,0,0,0.065);
+    }
+
+    .sidebar-brand img {
+        width: 100%;
+        max-width: 12rem;
+        display: block;
+        margin: 0 auto;
+    }
+
+    .sidebar-product {
+        color: var(--muted);
+        font-size: .76rem;
+        font-weight: 720;
+        letter-spacing: .08em;
+        text-transform: uppercase;
+        margin: .25rem 0 .8rem 0;
+    }
+
+    .login-card {
+        background: rgba(255,255,255,0.78);
+        backdrop-filter: saturate(160%) blur(18px);
+        border: 1px solid var(--border-soft);
+        border-radius: var(--radius);
+        padding: 1.15rem;
+        box-shadow: var(--shadow);
+    }
+
+    .login-title {
+        font-size: clamp(1.6rem, 3vw, 2.35rem);
+        font-weight: 780;
+        line-height: 1.08;
+        margin-bottom: .7rem;
+    }
+
+    .login-copy {
+        color: var(--muted);
+        line-height: 1.5;
+        max-width: 36rem;
+    }
+
+    @media (max-width: 980px) {
+        .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .login-shell { grid-template-columns: 1fr; margin-top: 1rem; }
+    }
+
+    @media (max-width: 640px) {
+        .block-container { padding-left: .9rem; padding-right: .9rem; }
+        .metric-grid { grid-template-columns: 1fr; }
+        .app-pagehead { padding: 1rem; }
+        .login-brand { min-height: auto; }
+        .brand-lockup { align-items: flex-start; flex-direction: column; }
+        .brand-lockup span { border-left: 0; padding-left: 0; }
+    }
+</style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _page_header(title: str, subtitle: str = "", kicker: str = "Рабочая панель") -> None:
+    st.markdown(
+        f"""
+<div class="app-pagehead">
+    <div class="app-kicker">{_escape(kicker)}</div>
+    <div class="app-title">{_escape(title)}</div>
+    <div class="app-subtitle">{_escape(subtitle)}</div>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _brand_lockup(settings: Optional[Settings] = None, compact: bool = False) -> str:
+    logo = _logo_data_uri(settings)
+    if not logo:
+        return '<div class="brand-lockup"><strong>NEXORA LEGAL</strong><span>product</span></div>'
+    label = "product" if compact else "program product"
+    return (
+        '<div class="brand-lockup">'
+        f'<img src="{logo}" alt="Nexora Legal">'
+        f'<span>{_escape(label)}</span>'
+        '</div>'
+    )
+
+
+def _sidebar_brand(settings: Settings) -> None:
+    logo = _logo_data_uri(settings)
+    if logo:
+        st.sidebar.markdown(
+            f"""
+<div class="sidebar-brand">
+    <img src="{logo}" alt="Nexora Legal">
+</div>
+<div class="sidebar-product">Compliance scanner</div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.sidebar.markdown("### NEXORA LEGAL")
+
+
+def _risk_pill(level: str) -> str:
+    cls = RISK_LEVEL_CLASS.get(level, "muted")
+    return (
+        f'<span class="risk-pill {cls}"><span class="risk-dot"></span>'
+        f'{_escape(_risk_ru(level))}</span>'
+    )
+
+
+def _score_display(score: int) -> str:
+    try:
+        n = int(score or 0)
+    except Exception:
+        n = 0
+    return "100+" if n > 100 else str(max(0, n))
+
+
+def _metric_grid(items: List[dict]) -> None:
+    cards = []
+    for item in items:
+        cls = _escape(item.get("class", ""))
+        cards.append(
+            f"""
+<div class="metric-card {cls}">
+    <div class="metric-label">{_escape(item.get("label", ""))}</div>
+    <div class="metric-value">{item.get("value_html") or _escape(item.get("value", ""))}</div>
+    <div class="metric-note">{_escape(item.get("note", ""))}</div>
+</div>
+            """
+        )
+    st.markdown('<div class="metric-grid">' + "\n".join(cards) + "</div>", unsafe_allow_html=True)
+
+
+def _soft_panel(title: str, body: str, label: str = "") -> None:
+    st.markdown(
+        f"""
+<div class="soft-panel">
+    <div class="section-label">{_escape(label)}</div>
+    <div class="section-title">{_escape(title)}</div>
+    <div class="muted-copy">{_escape(body)}</div>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -117,7 +677,7 @@ def _risk_ru(level: str) -> str:
 
 
 def risk_badge(level: str) -> str:
-    return f"{RISK_EMOJI.get(level, '⚪️')} {_risk_ru(level)}"
+    return f"{RISK_EMOJI.get(level, '•')} {_risk_ru(level)}"
 
 
 def _pdf_bytes(path: str) -> Optional[bytes]:
@@ -137,12 +697,12 @@ def _render_core_checklist(result: ScanResult) -> None:
     """Ядро-чеклист (основные проверки) и заметки агентной перепроверки."""
     items = getattr(result, "core_checklist", None) or []
     if items:
-        st.subheader("✅ Ядро-чеклист (основные проверки)")
+        st.subheader("Ядро-чеклист")
         counts = {"ok": 0, "risk": 0, "unclear": 0, "not_applicable": 0}
         for item in items:
             status = getattr(item, "status", "unclear") or "unclear"
             counts[status] = counts.get(status, 0) + 1
-            line = f"{CORE_STATUS_EMOJI.get(status, '⚪')} **{item.label}**"
+            line = f"{CORE_STATUS_EMOJI.get(status, '•')} **{item.label}**"
             if item.comment:
                 line += f" — {item.comment}"
             st.markdown(line)
@@ -162,7 +722,7 @@ def _render_fetch_diagnostics(result: ScanResult) -> None:
     """Диагностика рендера главной: браузер (Playwright) или простой HTTP."""
     if (result.fetch_method or "http") != "playwright":
         st.warning(
-            f"⚠️ Страницы загружены без браузера (метод: {result.fetch_method or 'http'}). "
+            f"Страницы загружены без браузера (метод: {result.fetch_method or 'http'}). "
             f"На JS-сайтах подвал и документы могут не находиться. "
             f"Ссылок на главной: {result.homepage_links}."
         )
@@ -171,20 +731,43 @@ def _render_fetch_diagnostics(result: ScanResult) -> None:
 
 
 def render_result_summary(result: ScanResult) -> None:
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Risk score", result.risk_score)
-    c2.metric("Уровень риска", risk_badge(result.risk_level))
-    c3.metric("Confidence", f"{result.confidence}/100")
-    c4.metric("Проверено страниц", result.pages_checked)
+    _metric_grid([
+        {
+            "label": "Risk score",
+            "value": _score_display(result.risk_score),
+            "note": "Шкала отображения 0-100+",
+            "class": RISK_LEVEL_CLASS.get(result.risk_level, "muted"),
+        },
+        {
+            "label": "Уровень риска",
+            "value_html": _risk_pill(result.risk_level),
+            "note": "Предварительный автоматический вывод",
+            "class": RISK_LEVEL_CLASS.get(result.risk_level, "muted"),
+        },
+        {
+            "label": "Confidence",
+            "value": f"{result.confidence}/100",
+            "note": "Достоверность зависит от доказательств",
+            "class": "muted",
+        },
+        {
+            "label": "Проверено страниц",
+            "value": result.pages_checked,
+            "note": "Публичная часть сайта",
+            "class": "muted",
+        },
+    ])
 
     if result.errors:
-        with st.expander(f"⚠️ Замечания сканера ({len(result.errors)})"):
+        with st.expander(f"Замечания сканера ({len(result.errors)})"):
             for e in result.errors:
                 st.text(f"• {e}")
 
-    st.info(
-        "Автоматическая проверка публичной части сайта не заменяет полноценный "
-        "юридический аудит. Выводы предварительные и требуют подтверждения юристом."
+    _soft_panel(
+        "Ограничение автоматической проверки",
+        "Проверка публичной части сайта не заменяет полноценный юридический аудит. "
+        "Выводы предварительные и требуют подтверждения юристом.",
+        "Важно",
     )
 
     st.subheader("Ключевые признаки риска")
@@ -195,8 +778,9 @@ def render_result_summary(result: ScanResult) -> None:
     for r in top:
         with st.container(border=True):
             st.markdown(
-                f"**{RISK_EMOJI.get(r.risk_level, '⚪️')} {r.title}** "
-                f"— _{_risk_ru(r.risk_level)}_, +{r.score}"
+                f"<div class='section-title'>{_escape(r.title)} {_risk_pill(r.risk_level)}</div>"
+                f"<div class='muted-copy'>Вес риска: +{_escape(r.score)}</div>",
+                unsafe_allow_html=True,
             )
             if r.report_phrase:
                 st.write(r.report_phrase)
@@ -230,7 +814,7 @@ def render_texts_and_downloads(result: ScanResult) -> None:
     with cols[0]:
         if pdf:
             st.download_button(
-                "⬇️ Скачать PDF-отчёт",
+                "Скачать PDF-отчёт",
                 data=pdf,
                 file_name=(Path(result.pdf_path).name if result.pdf_path else f"report_{result.scan_id}.pdf"),
                 mime="application/pdf",
@@ -241,7 +825,7 @@ def render_texts_and_downloads(result: ScanResult) -> None:
             st.caption("PDF не сформирован (см. замечания сканера).")
     with cols[1]:
         st.download_button(
-            "⬇️ Коммерческое предложение (.txt)",
+            "Коммерческое предложение (.txt)",
             data=(result.commercial_offer_text or "").encode("utf-8"),
             file_name=f"kp_{result.scan_id}.txt",
             mime="text/plain",
@@ -250,7 +834,7 @@ def render_texts_and_downloads(result: ScanResult) -> None:
         )
     with cols[2]:
         st.download_button(
-            "⬇️ Письмо (.txt)",
+            "Письмо (.txt)",
             data=(result.email_text or "").encode("utf-8"),
             file_name=f"email_{result.scan_id}.txt",
             mime="text/plain",
@@ -258,13 +842,13 @@ def render_texts_and_downloads(result: ScanResult) -> None:
             use_container_width=True,
         )
 
-    with st.expander("📄 Коммерческое предложение (нажмите иконку копирования)"):
+    with st.expander("Коммерческое предложение"):
         st.code(result.commercial_offer_text or "—", language="markdown")
-    with st.expander("✉️ Письмо для первичного контакта"):
+    with st.expander("Письмо для первичного контакта"):
         st.code(result.email_text or "—", language="markdown")
-    with st.expander("🧾 Резюме"):
+    with st.expander("Резюме"):
         st.write(result.executive_summary or "—")
-    with st.expander("🔧 JSON результата"):
+    with st.expander("JSON результата"):
         st.json(json.loads(result.model_dump_json()))
 
 
@@ -343,16 +927,24 @@ def _render_jobs_block(settings: Settings) -> None:
     st.subheader("Активные и последние проверки")
     for job in jobs:
         label = job.company_name or job.site_url or job.job_id
-        with st.container(border=True):
+        st.markdown(
+            f"""
+<div class="job-card">
+    <div class="job-title">{_escape(label)}</div>
+    <div class="job-meta">{_escape(job.site_url)} · {_escape(job.status)} · создана {_escape(job.created_at)}</div>
+</div>
+            """,
+            unsafe_allow_html=True,
+        )
+        with st.container():
             if job.status == "running":
-                st.markdown(f"⏳ **{label}** — `{job.site_url}` · выполняется (с {job.created_at})")
                 for line in job.progress[-3:]:
                     st.caption(line)
-                if st.button("⏹ Остановить", key=f"stop_{job.job_id}"):
+                if st.button("Остановить", key=f"stop_{job.job_id}"):
                     manager.stop(job.job_id)
                     st.rerun()
             elif job.status == "done":
-                st.markdown(f"✅ **{label}** — `{job.site_url}` · завершена ({job.finished_at})")
+                st.caption(f"Завершена: {job.finished_at}")
                 if job.scan_id:
                     if st.button("Показать результат", key=f"show_{job.job_id}"):
                         st.session_state["show_job_result"] = job.job_id
@@ -361,20 +953,24 @@ def _render_jobs_block(settings: Settings) -> None:
                 else:
                     st.caption("Результат не сохранён в базе (см. историю).")
             elif job.status == "stopped":
-                st.markdown(f"⏹ **{label}** — `{job.site_url}` · остановлена ({job.finished_at})")
+                st.caption(f"Остановлена: {job.finished_at}")
                 if job.scan_id:
                     if st.button("Показать частичный результат", key=f"show_{job.job_id}"):
                         st.session_state["show_job_result"] = job.job_id
                     if st.session_state.get("show_job_result") == job.job_id:
                         _render_job_result(job, settings)
             else:  # error
-                st.markdown(f"❌ **{label}** — `{job.site_url}` · ошибка ({job.finished_at})")
+                st.caption(f"Ошибка: {job.finished_at}")
                 if job.error:
                     st.caption(job.error)
 
 
 def tab_single(settings: Settings) -> None:
-    st.header("Проверка одного сайта")
+    _page_header(
+        "Проверка одного сайта",
+        "Запустите фоновую проверку публичной части сайта, получите risk score, PDF, КП и письмо.",
+        "Новая проверка",
+    )
 
     # Блок фоновых задач — всегда сверху: сюда «переподключается» пользователь
     # после перезагрузки страницы или переключения вкладок.
@@ -402,7 +998,7 @@ def tab_single(settings: Settings) -> None:
             value=True,
         )
         create_pdf = cc3.checkbox("Создать PDF", value=True)
-        submitted = st.form_submit_button("🚀 Запустить проверку", use_container_width=True)
+        submitted = st.form_submit_button("Запустить проверку", use_container_width=True)
 
     if submitted:
         if not url.strip():
@@ -450,10 +1046,11 @@ def _read_table(uploaded) -> "Optional[object]":
 def tab_bulk(settings: Settings) -> None:
     import pandas as pd
 
-    st.header("Массовая проверка")
-    st.caption(
+    _page_header(
+        "Массовая проверка",
         "Ожидаемые столбцы: company_name, site_url, industry, email, comment. "
-        "Обязателен только site_url."
+        "Обязателен только site_url.",
+        "CSV / XLSX",
     )
     uploaded = st.file_uploader("CSV или XLSX", type=["csv", "xlsx"])
     if uploaded is None:
@@ -470,7 +1067,7 @@ def tab_bulk(settings: Settings) -> None:
     b_llm = cc2.checkbox("LLM-анализ", value=bool(settings.enable_llm and settings.llm_api_key))
     b_pdf = cc3.checkbox("Создавать PDF", value=True)
 
-    if not st.button("🚀 Запустить массовую проверку", use_container_width=True):
+    if not st.button("Запустить массовую проверку", use_container_width=True):
         return
 
     rows = df.to_dict(orient="records")
@@ -531,7 +1128,7 @@ def tab_bulk(settings: Settings) -> None:
     # Экспорт XLSX
     xlsx = _results_to_xlsx(results)
     st.download_button(
-        "⬇️ Скачать результаты (XLSX)",
+        "Скачать результаты (XLSX)",
         data=xlsx,
         file_name=f"scan_results_{datetime.now():%Y%m%d_%H%M}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -541,7 +1138,7 @@ def tab_bulk(settings: Settings) -> None:
     zip_bytes = _pdfs_to_zip(results)
     if zip_bytes:
         st.download_button(
-            "⬇️ Скачать все PDF (ZIP)",
+            "Скачать все PDF (ZIP)",
             data=zip_bytes,
             file_name=f"scan_pdfs_{datetime.now():%Y%m%d_%H%M}.zip",
             mime="application/zip",
@@ -604,7 +1201,11 @@ def _pdfs_to_zip(results: List[ScanResult]) -> Optional[bytes]:
 def tab_history(settings: Settings) -> None:
     import pandas as pd
 
-    st.header("История проверок")
+    _page_header(
+        "История проверок",
+        "Все результаты, статусы лидов и доступ к сохранённым PDF-отчётам.",
+        "CRM-lite",
+    )
     try:
         scans = repositories.list_scans(settings, limit=1000)
     except Exception as exc:
@@ -644,14 +1245,14 @@ def tab_history(settings: Settings) -> None:
             index=statuses.index(cur) if cur in statuses else 0,
             format_func=lambda x: SCAN_STATUS_RU.get(ScanStatus(x), x),
         )
-        if st.button("💾 Сохранить статус"):
+        if st.button("Сохранить статус"):
             try:
                 repositories.update_status(sel, new_status, settings)
                 st.success("Статус обновлён.")
             except Exception as exc:
                 st.error(f"Ошибка: {exc}")
     with c2:
-        if st.button("🔍 Подробности", use_container_width=True):
+        if st.button("Подробности", use_container_width=True):
             st.session_state["detail_scan_id"] = sel
             st.info("Откройте вкладку «Подробности проверки».")
     with c3:
@@ -659,7 +1260,7 @@ def tab_history(settings: Settings) -> None:
         pdf = _get_or_regenerate_pdf(res, settings) if res else None
         if pdf:
             st.download_button(
-                "⬇️ PDF",
+                "PDF",
                 data=pdf,
                 file_name=f"report_{sel}.pdf",
                 mime="application/pdf",
@@ -681,7 +1282,11 @@ def _scan_label(scans: List[dict], scan_id: str) -> str:
 # Вкладка 4: Подробности
 # ---------------------------------------------------------------------------
 def tab_details(settings: Settings) -> None:
-    st.header("Подробности проверки")
+    _page_header(
+        "Подробности проверки",
+        "Полная карточка сканирования: страницы, формы, документы, cookie, трекеры, риски и доказательства.",
+        "Досье сайта",
+    )
     try:
         scans = repositories.list_scans(settings, limit=1000)
     except Exception as exc:
@@ -705,20 +1310,20 @@ def tab_details(settings: Settings) -> None:
     st.caption(f"{result.site_url} → {result.final_url}")
     render_result_summary(result)
 
-    with st.expander("🌐 Проверенные страницы", expanded=False):
+    with st.expander("Проверенные страницы", expanded=False):
         for p in result.pages:
             st.markdown(f"- [{p.title or p.url}]({p.url}) · код {p.status_code} · форм: {len(p.forms)}")
 
-    with st.expander("📝 Формы и согласия"):
+    with st.expander("Формы и согласия"):
         _render_forms(result)
 
-    with st.expander("📚 Документы и чек-листы"):
+    with st.expander("Документы и чек-листы"):
         _render_documents(result)
 
-    with st.expander("🍪 Cookies и сторонние сервисы"):
+    with st.expander("Cookies и сторонние сервисы"):
         _render_cookies_trackers(result)
 
-    with st.expander("🔒 Техническая проверка"):
+    with st.expander("Техническая проверка"):
         t = result.technical
         st.write({
             "HTTPS": t.https_enabled,
@@ -812,11 +1417,12 @@ def _render_cookies_trackers(result: ScanResult) -> None:
 # Вкладка 5: Настройки
 # ---------------------------------------------------------------------------
 def tab_settings(settings: Settings) -> None:
-    st.header("Настройки")
-    st.caption(
+    _page_header(
+        "Настройки",
         "Изменения сохраняются в базе данных и переживают перезапуск сервиса. "
         "Секреты (пароль администратора, SESSION_SECRET, DATABASE_URL) задаются "
-        "через переменные окружения хостинга."
+        "через переменные окружения хостинга.",
+        "Конфигурация",
     )
 
     with st.form("settings_form"):
@@ -859,7 +1465,7 @@ def tab_settings(settings: Settings) -> None:
         price_full_audit = c17.text_input("Полный аудит 152-ФЗ", value=settings.price_full_audit)
         price_turnkey = c18.text_input("Сопровождение под ключ", value=settings.price_turnkey)
 
-        saved = st.form_submit_button("💾 Сохранить настройки", use_container_width=True)
+        saved = st.form_submit_button("Сохранить настройки", use_container_width=True)
 
     if saved:
         new = settings.model_copy(update=dict(
@@ -887,7 +1493,7 @@ def tab_settings(settings: Settings) -> None:
         st.markdown("**Смена пароля администратора**")
         p1 = st.text_input("Новый пароль (мин. 8 символов)", type="password")
         p2 = st.text_input("Повторите новый пароль", type="password")
-        pw_saved = st.form_submit_button("🔑 Обновить пароль")
+        pw_saved = st.form_submit_button("Обновить пароль")
     if pw_saved:
         if p1 != p2:
             st.error("Пароли не совпадают.")
@@ -898,7 +1504,7 @@ def tab_settings(settings: Settings) -> None:
                 st.session_state["settings"] = load_settings()
 
     # --- Инфраструктура (только чтение) ---
-    with st.expander("ℹ️ Инфраструктура (переменные окружения)"):
+    with st.expander("Инфраструктура (переменные окружения)"):
         st.write({
             "База данных": "PostgreSQL (DATABASE_URL)" if settings.database_url else f"SQLite: {settings.db_path}",
             "Каталог экспорта (EXPORTS_DIR)": settings.exports_dir,
@@ -913,17 +1519,42 @@ def tab_settings(settings: Settings) -> None:
 # Dashboard
 # ---------------------------------------------------------------------------
 def tab_dashboard(settings: Settings) -> None:
-    st.header("Дашборд")
+    _page_header(
+        "Дашборд",
+        "Оперативный обзор проверок, уровня риска и последних лидов.",
+        "Nexora Legal Compliance Scanner",
+    )
     stats = repositories.dashboard_stats(settings)
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Всего проверок", stats.get("total", 0))
-    c2.metric("Высокий/критический риск", stats.get("high_critical", 0))
     by = stats.get("by_level", {})
-    c3.metric("Критический", by.get("critical", 0))
-    c4.metric("Высокий", by.get("high", 0))
+    _metric_grid([
+        {
+            "label": "Всего проверок",
+            "value": stats.get("total", 0),
+            "note": "Сохранено в истории",
+            "class": "muted",
+        },
+        {
+            "label": "Высокий / критический",
+            "value": stats.get("high_critical", 0),
+            "note": "Нужно приоритизировать",
+            "class": "high",
+        },
+        {
+            "label": "Критический",
+            "value": by.get("critical", 0),
+            "note": "Требует ручной проверки",
+            "class": "critical",
+        },
+        {
+            "label": "Высокий",
+            "value": by.get("high", 0),
+            "note": "Зоны риска",
+            "class": "high",
+        },
+    ])
 
-    if st.button("➕ Новая проверка", type="primary"):
+    if st.button("Новая проверка", type="primary"):
         st.session_state["nav"] = "Проверка одного сайта"
         st.rerun()
 
@@ -943,7 +1574,11 @@ def tab_dashboard(settings: Settings) -> None:
 # Документация / ограничения
 # ---------------------------------------------------------------------------
 def tab_docs(settings: Settings) -> None:
-    st.header("Документация и ограничения")
+    _page_header(
+        "Документация и ограничения",
+        "Как корректно использовать результаты автоматической проверки и не делать категоричных юридических выводов.",
+        "Методология",
+    )
     st.markdown(
         """
 ### Что делает система
@@ -981,17 +1616,45 @@ CRM, CMS/admin-панели, базе данных, серверной логи�
 # Авторизация
 # ---------------------------------------------------------------------------
 def _login_screen(settings: Settings) -> None:
-    st.title("🛡️ Экспресс-аудит сайтов · 152-ФЗ")
-    st.subheader("Вход")
+    left, right = st.columns([1.1, 0.9], gap="large")
+    with left:
+        st.markdown(
+            f"""
+<div class="login-brand">
+    {_brand_lockup(settings)}
+    <div>
+        <div class="login-title">Экспресс-аудит сайтов по 152-ФЗ</div>
+        <div class="login-copy">
+            Внутренний продукт Nexora Legal для быстрой проверки публичной части сайта,
+            документов, форм, cookies и сторонних сервисов.
+        </div>
+    </div>
+    <div class="muted-copy">Автоматические выводы являются признаками риска и требуют проверки юристом.</div>
+</div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with right:
+        st.markdown(
+            """
+<div class="login-card">
+    <div class="section-label">Secure access</div>
+    <div class="section-title">Вход в систему</div>
+    <div class="muted-copy">Доступ только для авторизованных сотрудников бюро.</div>
+</div>
+            """,
+            unsafe_allow_html=True,
+        )
     if not auth.is_configured(settings):
         st.error(
             "Пароль администратора не задан. Установите переменную окружения "
             "**ADMIN_PASSWORD** (и **ADMIN_EMAIL**) на хостинге и перезапустите сервис."
         )
-    with st.form("login_form"):
-        email = st.text_input("Email", value="")
-        password = st.text_input("Пароль", type="password")
-        submitted = st.form_submit_button("Войти", use_container_width=True)
+    with right:
+        with st.form("login_form"):
+            email = st.text_input("Email", value="")
+            password = st.text_input("Пароль", type="password")
+            submitted = st.form_submit_button("Войти", use_container_width=True)
     if submitted:
         if auth.check_credentials(email, password, settings):
             st.session_state["authenticated"] = True
@@ -1006,7 +1669,7 @@ def _login_screen(settings: Settings) -> None:
             st.rerun()
         else:
             st.error("Неверный email или пароль.")
-    st.caption("Доступ только для авторизованных сотрудников бюро.")
+    st.caption("Nexora Legal · internal compliance scanner")
 
 
 def _is_authenticated() -> bool:
@@ -1073,6 +1736,7 @@ PAGES = {
 
 def main() -> None:
     settings = get_settings()
+    _inject_design_system()
     ensure_db(settings)
 
     # Восстановление входа по токену из URL (переживает перезагрузку страницы).
@@ -1083,7 +1747,8 @@ def main() -> None:
         return
 
     # --- Боковое меню ---
-    st.sidebar.markdown(f"### 🛡️ {settings.firm_name or 'Экспресс-аудит'}")
+    _sidebar_brand(settings)
+    st.sidebar.markdown(f"**{_escape(settings.firm_name or 'Экспресс-аудит')}**")
     st.sidebar.caption(f"Вы вошли как: {st.session_state.get('auth_email', settings.admin_email)}")
     if st.sidebar.button("Выйти"):
         _logout()
@@ -1091,7 +1756,7 @@ def main() -> None:
 
     if not auth.secret_is_secure(settings):
         st.sidebar.warning(
-            "⚠️ SESSION_SECRET не задан — «запомнить вход» отключено (после "
+            "SESSION_SECRET не задан — «запомнить вход» отключено (после "
             "перезагрузки нужно логиниться заново). Задайте переменную окружения "
             "SESSION_SECRET (длинную случайную строку) на хостинге."
         )
