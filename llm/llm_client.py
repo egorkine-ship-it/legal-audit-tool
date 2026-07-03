@@ -352,9 +352,37 @@ def _facts_for_texts(
     """Собрать словарь фактов для генерации клиентских текстов через LLM."""
     facts: Dict[str, Any] = {}
     try:
-        facts = dict(prompts._facts_from_result(result, ctx))
+        from legal import pd_rules
+
+        # Токен-экономный пакет: только проверенные факты и top-находки, без
+        # текстов документов/HTML. Старые ключи сохраняем для prompts.py.
+        facts = dict(pd_rules.build_fact_bundle(result, settings, top_n=5))
+        facts["forms_count"] = facts.get("forms_found", 0)
+        facts["risk_level"] = prompts.RISK_LEVEL_RU.get(
+            prompts._safe_level(str(facts.get("risk_level", ""))), facts.get("risk_level")
+        )
+        facts["top_risks"] = [
+            {
+                "title": str(item.get("title", "")).strip(),
+                "level": prompts.RISK_LEVEL_RU.get(
+                    prompts._safe_level(str(item.get("risk_level", ""))),
+                    str(item.get("risk_level", "")),
+                ),
+                "explanation": str(item.get("what_found", "") or item.get("recommendation", "")).strip(),
+            }
+            for item in (facts.get("top_findings") or [])
+            if isinstance(item, dict)
+        ]
+        facts["documents_found"] = [
+            str(d.get("type", "")).strip()
+            for d in (facts.get("documents") or [])
+            if isinstance(d, dict) and d.get("type")
+        ]
     except Exception:
-        facts = {}
+        try:
+            facts = dict(prompts._facts_from_result(result, ctx))
+        except Exception:
+            facts = {}
 
     # Реквизиты бюро.
     try:

@@ -668,6 +668,19 @@ def _get_or_regenerate_pdf(result: ScanResult, settings: Settings) -> Optional[b
     return None
 
 
+def _get_or_generate_teaser_pdf(result: ScanResult, settings: Settings) -> Optional[bytes]:
+    """Байты короткого клиентского КП. Генерируется из сохранённого ScanResult."""
+    try:
+        from reports import teaser_pdf_generator
+
+        path = teaser_pdf_generator.generate_teaser_pdf(result, settings, _load_packages(settings))
+        if path:
+            return _pdf_bytes(path)
+    except Exception:
+        pass
+    return None
+
+
 def _risk_ru(level: str) -> str:
     """Русское название уровня риска, безопасно при неизвестном значении."""
     try:
@@ -809,12 +822,26 @@ def render_result_summary(result: ScanResult) -> None:
 
 def render_texts_and_downloads(result: ScanResult) -> None:
     st.divider()
-    cols = st.columns(3)
-    pdf = _get_or_regenerate_pdf(result, get_settings())
+    settings = get_settings()
+    cols = st.columns(4)
+    teaser_pdf = _get_or_generate_teaser_pdf(result, settings)
+    pdf = _get_or_regenerate_pdf(result, settings)
     with cols[0]:
+        if teaser_pdf:
+            st.download_button(
+                "Короткое КП PDF",
+                data=teaser_pdf,
+                file_name=f"kp_short_{result.scan_id}.pdf",
+                mime="application/pdf",
+                key=f"teaser_pdf_{result.scan_id}",
+                use_container_width=True,
+            )
+        else:
+            st.caption("Короткое КП PDF не сформировано.")
+    with cols[1]:
         if pdf:
             st.download_button(
-                "Скачать PDF-отчёт",
+                "Полный PDF-отчёт",
                 data=pdf,
                 file_name=(Path(result.pdf_path).name if result.pdf_path else f"report_{result.scan_id}.pdf"),
                 mime="application/pdf",
@@ -823,7 +850,7 @@ def render_texts_and_downloads(result: ScanResult) -> None:
             )
         else:
             st.caption("PDF не сформирован (см. замечания сканера).")
-    with cols[1]:
+    with cols[2]:
         st.download_button(
             "Коммерческое предложение (.txt)",
             data=(result.commercial_offer_text or "").encode("utf-8"),
@@ -832,7 +859,7 @@ def render_texts_and_downloads(result: ScanResult) -> None:
             key=f"kp_{result.scan_id}",
             use_container_width=True,
         )
-    with cols[2]:
+    with cols[3]:
         st.download_button(
             "Письмо (.txt)",
             data=(result.email_text or "").encode("utf-8"),
@@ -1235,7 +1262,7 @@ def tab_history(settings: Settings) -> None:
     if not scan:
         return
 
-    c1, c2, c3 = st.columns([2, 1, 1])
+    c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
     with c1:
         statuses = [s.value for s in ScanStatus]
         cur = scan.get("status") or ScanStatus.scanned.value
@@ -1257,10 +1284,24 @@ def tab_history(settings: Settings) -> None:
             st.info("Откройте вкладку «Подробности проверки».")
     with c3:
         res = repositories.get_scan(sel, settings)
+        teaser_pdf = _get_or_generate_teaser_pdf(res, settings) if res else None
+        if teaser_pdf:
+            st.download_button(
+                "КП PDF",
+                data=teaser_pdf,
+                file_name=f"kp_short_{sel}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+                key=f"hist_teaser_pdf_{sel}",
+            )
+        else:
+            st.caption("КП недоступно")
+    with c4:
+        res = repositories.get_scan(sel, settings)
         pdf = _get_or_regenerate_pdf(res, settings) if res else None
         if pdf:
             st.download_button(
-                "PDF",
+                "Полный PDF",
                 data=pdf,
                 file_name=f"report_{sel}.pdf",
                 mime="application/pdf",
