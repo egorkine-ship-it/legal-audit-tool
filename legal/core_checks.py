@@ -166,17 +166,43 @@ def _docs_of_type(result: ScanResult, doc_type: str) -> List[DocumentResult]:
 
 
 def _accessible_policy(result: ScanResult) -> Optional[DocumentResult]:
-    """Первый доступный (is_accessible) документ типа privacy_policy."""
+    """Первый реально присутствующий и доступный документ типа privacy_policy.
+
+    Важно: догадки по типовым путям (/privacy, /policy и т.п.) на catch-all
+    сайтах могут открываться с 200 и давать обычный текст главной. Такие
+    документы нельзя считать опубликованной политикой, поэтому используем тот же
+    критерий document_is_present, что и rule engine.
+    """
+    try:
+        from scanner import document_finder as _df
+    except Exception:
+        _df = None
     for d in _docs_of_type(result, "privacy_policy"):
-        if getattr(d, "is_accessible", False):
+        try:
+            present = _df.document_is_present(d) if _df is not None else True
+        except Exception:
+            present = True
+        if present and getattr(d, "is_accessible", False):
             return d
     return None
 
 
 def _link_confirmed_policy(result: ScanResult) -> Optional[DocumentResult]:
-    """Политика, существование которой подтверждено ссылкой (без извлечённого текста)."""
+    """Политика, существование которой подтверждено реальной ссылкой сайта."""
+    try:
+        from scanner import document_finder as _df
+    except Exception:
+        _df = None
     for d in _docs_of_type(result, "privacy_policy"):
-        if getattr(d, "link_confirmed", False) and not getattr(d, "is_accessible", False):
+        try:
+            present = _df.document_is_present(d) if _df is not None else True
+        except Exception:
+            present = True
+        if (
+            present
+            and getattr(d, "link_confirmed", False)
+            and not getattr(d, "is_accessible", False)
+        ):
             return d
     return None
 
