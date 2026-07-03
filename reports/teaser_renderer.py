@@ -69,6 +69,28 @@ def _risk_label(level: str) -> str:
         return level or "не определён"
 
 
+def _liability_text(label: str) -> str:
+    """Return client-facing liability hint, using data/liability.yml when possible."""
+    raw = _truncate(label, 220)
+    if not raw:
+        return "уточняется юристом по итогам полного аудита"
+    try:
+        from reports.html_renderer import _load_liability  # type: ignore
+
+        data = _load_liability()
+        for item in data.get("items") or []:
+            item_label = str(item.get("label") or "").strip()
+            if item_label.lower() != raw.lower():
+                continue
+            amount = str(item.get("amount") or "").strip()
+            basis = str(item.get("basis") or "").strip()
+            details = " · ".join(x for x in [basis, amount] if x)
+            return f"{item_label}: {details}" if details else item_label
+    except Exception:
+        pass
+    return raw
+
+
 def _finding_cards(findings: List[PDFinding]) -> str:
     if not findings:
         return (
@@ -89,7 +111,7 @@ def _finding_cards(findings: List[PDFinding]) -> str:
             f'<span class="pill {level_cls}">{_escape(_risk_label(f.risk_level))}</span></div>'
             f'<p class="finding-text">{_escape(f.what_found)}</p>'
             f'<p class="fine-line"><strong>Возможная категория ответственности:</strong> '
-            f'{_escape(f.liability_hint or "уточняется юристом по итогам полного аудита")}</p>'
+            f'{_escape(_liability_text(f.liability_hint))}</p>'
             f'<p class="small"><strong>Что сделать:</strong> {_escape(f.recommendation)}</p>'
             + (f'<p class="evidence">Доказательство: {_escape(_truncate(evidence, 210))}</p>' if evidence else "")
             + "</div></article>"
