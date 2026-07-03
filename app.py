@@ -825,7 +825,8 @@ def render_texts_and_downloads(result: ScanResult) -> None:
     settings = get_settings()
     cols = st.columns(4)
     teaser_pdf = _get_or_generate_teaser_pdf(result, settings)
-    pdf = _get_or_regenerate_pdf(result, settings)
+    deep_or_existing_full = (getattr(result, "scan_mode", "quick") == "deep") or bool(result.pdf_path)
+    pdf = _get_or_regenerate_pdf(result, settings) if deep_or_existing_full else None
     with cols[0]:
         if teaser_pdf:
             st.download_button(
@@ -849,7 +850,10 @@ def render_texts_and_downloads(result: ScanResult) -> None:
                 use_container_width=True,
             )
         else:
-            st.caption("PDF не сформирован (см. замечания сканера).")
+            if getattr(result, "scan_mode", "quick") == "quick":
+                st.caption("Полный отчёт доступен в режиме «Глубокий аудит».")
+            else:
+                st.caption("PDF не сформирован (см. замечания сканера).")
     with cols[2]:
         st.download_button(
             "Коммерческое предложение (.txt)",
@@ -1003,6 +1007,26 @@ def tab_single(settings: Settings) -> None:
     # после перезагрузки страницы или переключения вкладок.
     _render_jobs_block(settings)
 
+    scan_mode = st.radio(
+        "Режим проверки",
+        options=["quick", "deep"],
+        index=0,
+        horizontal=True,
+        format_func=lambda x: (
+            "Быстрое КП (без LLM)" if x == "quick" else "Глубокий аудит (LLM + полный отчёт)"
+        ),
+    )
+    if scan_mode == "quick":
+        st.caption(
+            "Быстрый режим: сканирует сайт, строит короткое КП PDF и не использует LLM. "
+            "Подходит для первичного коммерческого касания."
+        )
+    else:
+        st.caption(
+            "Глубокий режим: включает LLM-анализ документов, агентную перепроверку и полный внутренний PDF. "
+            "Этот режим может заметно расходовать токены."
+        )
+
     with st.form("single_form"):
         c1, c2 = st.columns(2)
         with c1:
@@ -1015,21 +1039,17 @@ def tab_single(settings: Settings) -> None:
             max_pages = st.number_input(
                 "Лимит страниц", min_value=1, max_value=200, value=int(settings.max_pages)
             )
-        cc1, cc2, cc3 = st.columns(3)
-        use_llm = cc1.checkbox(
-            "Использовать LLM для анализа документов",
-            value=bool(settings.enable_llm and settings.llm_api_key),
-        )
-        use_agent = cc2.checkbox(
-            "Агентная перепроверка (LLM-агент обходит сайт)",
-            value=True,
-        )
-        create_pdf = cc3.checkbox("Создать PDF", value=True)
+        if scan_mode == "deep":
+            create_pdf = st.checkbox("Создать полный внутренний PDF-отчёт", value=True)
+        else:
+            create_pdf = False
         submitted = st.form_submit_button("Запустить проверку", use_container_width=True)
 
     if submitted:
         if not url.strip():
             st.error("Укажите URL сайта.")
+        elif scan_mode == "deep" and (not settings.enable_llm or not settings.llm_api_key):
+            st.error("Для глубокого аудита включите LLM и укажите API key в настройках.")
         else:
             scan_input = ScanInput(
                 company_name=company.strip(),
@@ -1038,8 +1058,9 @@ def tab_single(settings: Settings) -> None:
                 email=email.strip(),
                 comment=comment.strip(),
                 max_pages=int(max_pages),
-                use_llm=bool(use_llm),
-                use_agent=bool(use_agent),
+                scan_mode=scan_mode,
+                use_llm=(scan_mode == "deep"),
+                use_agent=(scan_mode == "deep"),
                 create_pdf=bool(create_pdf),
             )
             job_id = JobManager.instance().submit(scan_input, settings)
@@ -1089,12 +1110,31 @@ def tab_bulk(settings: Settings) -> None:
     st.subheader("Предпросмотр")
     st.dataframe(df, use_container_width=True, height=240)
 
-    cc1, cc2, cc3 = st.columns(3)
+    scan_mode = st.radio(
+        "Режим массовой проверки",
+        options=["quick", "deep"],
+        index=0,
+        horizontal=True,
+        format_func=lambda x: (
+            "Быстрое КП (без LLM)" if x == "quick" else "Глубокий аудит (LLM, без агента)"
+        ),
+    )
+    st.caption(
+        "В массовом быстром режиме PDF-архив содержит короткие КП. "
+        "Глубокий режим анализирует документы через LLM и может заметно расходовать токены."
+    )
+    cc1, cc2 = st.columns(2)
     b_max = cc1.number_input("Лимит страниц на сайт", 1, 200, int(settings.max_pages))
-    b_llm = cc2.checkbox("LLM-анализ", value=bool(settings.enable_llm and settings.llm_api_key))
-    b_pdf = cc3.checkbox("Создавать PDF", value=True)
+    b_pdf = cc2.checkbox(
+        "Создавать полный внутренний PDF",
+        value=(scan_mode == "deep"),
+        disabled=(scan_mode == "quick"),
+    )
 
     if not st.button("Запустить массовую проверку", use_container_width=True):
+        return
+    if scan_mode == "deep" and (not settings.enable_llm or not settings.llm_api_key):
+        st.error("Для глубокого аудита включите LLM и укажите API key в настройках.")
         return
 
     rows = df.to_dict(orient="records")
@@ -1117,12 +1157,13 @@ def tab_bulk(settings: Settings) -> None:
             email="" if str(row.get("email") or "").lower() == "nan" else str(row.get("email") or "").strip(),
             comment="" if str(row.get("comment") or "").lower() == "nan" else str(row.get("comment") or "").strip(),
             max_pages=int(b_max),
-            use_llm=bool(b_llm),
+            scan_mode=scan_mode,
+            use_llm=(scan_mode == "deep"),
             # В массовой проверке агентный обход по умолчанию ВЫКЛЮЧЕН: он
             # медленный и дорогой на каждый сайт. Для глубокой проверки —
             # одиночный режим.
             use_agent=False,
-            create_pdf=bool(b_pdf),
+            create_pdf=bool(b_pdf and scan_mode == "deep"),
         )
         log_box.info(f"[{i}/{len(rows)}] Проверка: {site}")
 
@@ -1161,8 +1202,8 @@ def tab_bulk(settings: Settings) -> None:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
-    # ZIP всех PDF
-    zip_bytes = _pdfs_to_zip(results)
+    # ZIP всех PDF: короткие КП есть у обоих режимов, полный отчёт — только у deep.
+    zip_bytes = _pdfs_to_zip(results, settings)
     if zip_bytes:
         st.download_button(
             "Скачать все PDF (ZIP)",
@@ -1178,6 +1219,7 @@ def _summary_row(r: ScanResult) -> dict:
         "company_name": r.company_name,
         "site_url": r.site_url,
         "industry": r.industry,
+        "scan_mode": getattr(r, "scan_mode", "quick"),
         "email": r.email,
         "risk_level": r.risk_level,
         "risk_score": r.risk_score,
@@ -1210,14 +1252,18 @@ def _results_to_xlsx(results: List[ScanResult]) -> bytes:
     return buf.getvalue()
 
 
-def _pdfs_to_zip(results: List[ScanResult]) -> Optional[bytes]:
+def _pdfs_to_zip(results: List[ScanResult], settings: Settings) -> Optional[bytes]:
     buf = io.BytesIO()
     count = 0
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for r in results:
+            teaser = _get_or_generate_teaser_pdf(r, settings)
+            if teaser:
+                zf.writestr(f"kp_short_{r.scan_id}.pdf", teaser)
+                count += 1
             data = _pdf_bytes(r.pdf_path)
             if data:
-                zf.writestr(Path(r.pdf_path).name, data)
+                zf.writestr(f"full_report_{r.scan_id}.pdf", data)
                 count += 1
     return buf.getvalue() if count else None
 
@@ -1298,7 +1344,8 @@ def tab_history(settings: Settings) -> None:
             st.caption("КП недоступно")
     with c4:
         res = repositories.get_scan(sel, settings)
-        pdf = _get_or_regenerate_pdf(res, settings) if res else None
+        full_allowed = bool(res and (getattr(res, "scan_mode", "quick") == "deep" or res.pdf_path))
+        pdf = _get_or_regenerate_pdf(res, settings) if (res and full_allowed) else None
         if pdf:
             st.download_button(
                 "Полный PDF",
@@ -1309,7 +1356,7 @@ def tab_history(settings: Settings) -> None:
                 key=f"hist_pdf_{sel}",
             )
         else:
-            st.caption("PDF недоступен")
+            st.caption("Полный PDF недоступен")
 
 
 def _scan_label(scans: List[dict], scan_id: str) -> str:

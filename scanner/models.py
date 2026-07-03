@@ -411,11 +411,14 @@ class ScanInput(BaseModel):
     email: str = ""
     comment: str = ""
     max_pages: int = 20
-    use_llm: bool = True
+    # quick: быстрое коммерческое КП без LLM и без полного внутреннего PDF.
+    # deep: глубокий внутренний аудит с LLM-анализом документов и полным PDF.
+    scan_mode: str = "quick"
+    use_llm: bool = False
     # Агентная перепроверка: LLM-агент реально ходит по сайту (через браузер)
     # и проверяет, что мы ничего не пропустили. Работает только при use_llm.
-    use_agent: bool = True
-    create_pdf: bool = True
+    use_agent: bool = False
+    create_pdf: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -450,6 +453,7 @@ class ScanResult(BaseModel):
     industry: str = "auto"
     email: str = ""
     comment: str = ""
+    scan_mode: str = "quick"
 
     pages_checked: int = 0
     fetch_method: str = ""  # playwright / http — как рендерилась главная

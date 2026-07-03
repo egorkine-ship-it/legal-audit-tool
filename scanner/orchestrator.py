@@ -84,6 +84,19 @@ def run_scan(
     from legal import checklist_engine, document_analyzer, rule_engine, risk_scoring
     from llm import llm_client
 
+    scan_mode = (getattr(scan_input, "scan_mode", "") or "quick").strip().lower()
+    if scan_mode not in {"quick", "deep"}:
+        scan_mode = "quick"
+    if scan_mode == "quick":
+        # Quick mode is a token-safe commercial proposal scan: no document LLM,
+        # no LLM site agent, no full internal PDF. The short KP PDF is generated
+        # by the UI/export layer from deterministic facts.
+        scan_input.use_llm = False
+        scan_input.use_agent = False
+        scan_input.create_pdf = False
+    else:
+        scan_input.use_llm = True
+
     result = ScanResult(
         scan_id=uuid.uuid4().hex[:12],
         created_at=datetime.now().isoformat(timespec="seconds"),
@@ -92,6 +105,7 @@ def run_scan(
         industry=scan_input.industry,
         email=scan_input.email,
         comment=scan_input.comment,
+        scan_mode=scan_mode,
         status=ScanStatus.scanned.value,
     )
 
