@@ -179,6 +179,7 @@ def _finding(
     why_it_matters: str,
     recommendation: str,
     liability_kind: str = "",
+    force_level: str = "",
 ) -> PDFinding:
     r_url, r_quote = _evidence_from_risk(risk)
     c_url, c_quote = _evidence_from_core(core)
@@ -190,7 +191,7 @@ def _finding(
     return PDFinding(
         id=finding_id,
         title=title,
-        risk_level=_best_level(
+        risk_level=force_level or _best_level(
             [
                 str(getattr(risk, "risk_level", "") or ""),
                 str(getattr(core, "risk_level", "") or ""),
@@ -295,6 +296,7 @@ def build_pd_findings(result: ScanResult) -> List[PDFinding]:
                 why_it_matters="Клиент должен понимать, кто является оператором ПДн и куда направлять обращения.",
                 recommendation="Проверить реквизиты оператора, домены и контактные данные во всех документах сайта.",
                 liability_kind="policy",
+                force_level=RiskLevel.medium.value,
             )
         )
 
@@ -430,7 +432,7 @@ def build_pd_findings(result: ScanResult) -> List[PDFinding]:
                 default_score=20,
                 what_found="Найдены cookies или сетевые запросы к аналитическим/маркетинговым сервисам до активного выбора пользователя.",
                 why_it_matters="Этот блок часто требует технической донастройки сайта, а не только текста политики.",
-                recommendation="Настроить delayed loading для необязательных cookies и проверить CMP/cookie-баннер.",
+                recommendation="Настроить запуск необязательных cookies только после выбора пользователя и проверить cookie-баннер.",
                 liability_kind="policy",
             )
         )

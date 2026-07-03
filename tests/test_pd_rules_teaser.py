@@ -194,8 +194,10 @@ def test_llm_client_text_facts_use_compact_bundle():
 def test_teaser_html_contains_short_commercial_structure():
     html = render_teaser_html(_result(), _Settings(), _PACKAGES)
 
-    assert "Краткая выжимка" in html
-    assert "Приоритетные зоны риска" in html
+    assert "Бесплатная экспресс-проверка" in html
+    assert "3 приоритетные зоны" in html
+    assert "Ещё" in html
+    assert "Следующий шаг" in html
     assert "ООО Аскона" in html
     assert "Nexora Legal" in html
     assert "Комплект документов" in html
@@ -216,4 +218,4 @@ def test_teaser_html_uses_safe_legal_tone():
     ]
     for phrase in forbidden:
         assert phrase not in html
-    assert "требуют проверки юристом" in html
+    assert "требуют ручной квалификации" in html
